@@ -191,7 +191,6 @@ export default function DetalheEquipamento() {
       </div>
 
       <QRCodeDisplay equipamento={eq} />
-
       {/* TABS: HISTÓRICO */}
       <div className={styles.section}>
         <div className={styles.tabs}>
