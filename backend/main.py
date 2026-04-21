@@ -177,10 +177,16 @@ class EquipamentoUpdate(BaseModel):
     nome: Optional[str] = None
     tipo: Optional[str] = None
     localizacao: Optional[str] = None
+    numero_serie: Optional[str] = None
     fabricante: Optional[str] = None
     modelo: Optional[str] = None
     ano_fabrico: Optional[int] = None
     potencia_kw: Optional[float] = None
+    ligacao_eletrica: Optional[str] = None
+    corrente_a: Optional[float] = None
+    voltagem_v: Optional[float] = None
+    peso_kg: Optional[float] = None
+    peso_max_kg: Optional[float] = None
     notas_tecnicas: Optional[str] = None
     foto_url: Optional[str] = None
 
@@ -189,11 +195,17 @@ class EquipamentoCreate(BaseModel):
     tipo: str
     localizacao: str
     codigo: str
+    numero_serie: Optional[str] = None
     range_temp: Optional[str] = None
     fabricante: Optional[str] = None
     modelo: Optional[str] = None
     ano_fabrico: Optional[int] = None
     potencia_kw: Optional[float] = None
+    ligacao_eletrica: Optional[str] = None
+    corrente_a: Optional[float] = None
+    voltagem_v: Optional[float] = None
+    peso_kg: Optional[float] = None
+    peso_max_kg: Optional[float] = None
     notas_tecnicas: Optional[str] = None
     estado_atual: EstadoEquipamento = EstadoEquipamento.DISPONIVEL
     foto_url: Optional[str] = None

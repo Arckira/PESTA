@@ -132,8 +132,109 @@
   min-width: 0;
 }
 
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 18px 22px 0;
+  backdrop-filter: blur(10px);
+}
+
+.sessionPanel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.92), rgba(246,247,251,0.96)),
+    linear-gradient(90deg, rgba(200,16,46,0.08), transparent);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.06);
+}
+
+.sessionIdentity {
+  min-width: 0;
+}
+
+.sessionNameRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.sessionName {
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 1;
+  color: var(--text-primary);
+}
+
+.sessionRole {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--red-glow);
+  color: var(--red-strong);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sessionPlaceholder {
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-size: 15px;
+}
+
+.sessionActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.timeoutBadge {
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.75);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.timeoutWarning {
+  border-color: rgba(200,16,46,0.34);
+  background: var(--red-glow);
+  color: var(--red-strong);
+}
+
+.userButton {
+  border: none;
+  border-radius: 12px;
+  padding: 11px 16px;
+  background: var(--red);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  transition: transform var(--transition), background var(--transition);
+}
+
+.userButton:hover {
+  transform: translateY(-1px);
+  background: var(--red-strong);
+}
+
 .content {
-  padding: 32px 36px;
+  padding: 24px 36px 32px;
   width: 100%;
   max-width: none;
 }
@@ -170,6 +271,24 @@
 
   .main {
     min-height: 0;
+  }
+
+  .topbar {
+    padding: 14px 14px 0;
+  }
+
+  .sessionPanel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sessionActions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .sessionName {
+    font-size: 24px;
   }
 
   .content {

@@ -25,12 +25,18 @@ class Equipamento(SQLModel, table=True):
     tipo:         str
     localizacao:  str
     codigo:       str = Field(index=True, unique=True)
+    numero_serie: Optional[str] = Field(default=None, index=True)
     range_temp:   Optional[str] = None
     # Campos para o "manual" do equipamento (ficha técnica)
     fabricante:   Optional[str] = None
     modelo:       Optional[str] = None
     ano_fabrico:  Optional[int] = None
     potencia_kw:  Optional[float] = None
+    ligacao_eletrica: Optional[str] = None
+    corrente_a:   Optional[float] = None
+    voltagem_v:   Optional[float] = None
+    peso_kg:      Optional[float] = None
+    peso_max_kg:  Optional[float] = None
     notas_tecnicas: Optional[str] = None
     estado_atual: EstadoEquipamento = EstadoEquipamento.DISPONIVEL
     foto_url:     Optional[str] = None

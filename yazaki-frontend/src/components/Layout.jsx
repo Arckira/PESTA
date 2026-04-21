@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import styles from './Layout.module.css'
+import { useSession } from '../session/SessionProvider.jsx'
 
 const NAV = [
   { to: '/',              icon: '⬡', label: 'Dashboard' },
@@ -12,6 +13,16 @@ const NAV = [
 ]
 
 export default function Layout({ children }) {
+  const {
+    activeUser,
+    roleLabel,
+    hasActiveSession,
+    remainingLabel,
+    isExpiringSoon,
+    openSessionModal,
+    changeUser,
+  } = useSession()
+
   return (
     <div className={styles.shell}>
       <aside className={styles.sidebar}>
@@ -45,6 +56,34 @@ export default function Layout({ children }) {
       </aside>
 
       <main className={styles.main}>
+        <div className={styles.topbar}>
+          <div className={styles.sessionPanel}>
+            <div className={styles.sessionIdentity}>
+              <div className="label">Utilizador ativo</div>
+              {hasActiveSession ? (
+                <div className={styles.sessionNameRow}>
+                  <strong className={styles.sessionName}>{activeUser.nome}</strong>
+                  <span className={styles.sessionRole}>{roleLabel}</span>
+                </div>
+              ) : (
+                <div className={styles.sessionPlaceholder}>Sem sessão ativa</div>
+              )}
+            </div>
+
+            <div className={styles.sessionActions}>
+              <div className={`${styles.timeoutBadge} ${isExpiringSoon ? styles.timeoutWarning : ''}`}>
+                Sessão expira em: {remainingLabel || '—'}
+              </div>
+              <button
+                type="button"
+                className={styles.userButton}
+                onClick={hasActiveSession ? changeUser : openSessionModal}
+              >
+                {hasActiveSession ? 'Mudar utilizador' : 'Selecionar utilizador'}
+              </button>
+            </div>
+          </div>
+        </div>
         <div className={styles.content}>
           {children}
         </div>
