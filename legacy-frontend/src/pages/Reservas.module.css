@@ -60,6 +60,15 @@
 .modal { background: var(--bg-panel); border: 1px solid var(--border-bright); border-radius: var(--radius-lg); width: 520px; max-width: 95vw; padding: 28px; animation: slideUp 0.2s ease; }
 @keyframes slideUp { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 .modalTitle { font-family: var(--font-display); font-size: 22px; font-weight: 700; margin-bottom: 18px; }
+.modalHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.infoWrap { position: relative; display: inline-block; }
+.infoIcon { width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background: var(--bg-card); border:1px solid var(--border); color: var(--text-secondary); font-size:11px; font-weight:700; cursor:default; }
+.infoTooltip { display:none; position: absolute; right: 0; top: calc(100% + 8px); background: var(--bg-panel); border:1px solid var(--border); padding:8px 10px; border-radius:8px; color: var(--text-primary); font-size:12px; min-width:200px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); z-index: 60; }
+.infoWrap:hover .infoTooltip { display:block; }
+
+.infoWrapSmall { position: relative; display: inline-block; }
+.infoIconSmall { width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background: var(--bg-card); border:1px solid var(--border); color: var(--text-secondary); font-size:10px; font-weight:700; cursor:default; }
+.infoWrapSmall .infoTooltip { left: 0; top: calc(100% + 6px); min-width:160px; }
 .hourRule {
   margin: -8px 0 14px;
   padding: 8px 10px;

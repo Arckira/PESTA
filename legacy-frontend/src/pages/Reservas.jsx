@@ -307,7 +307,13 @@ export default function Reservas() {
         <div className={styles.overlay} onClick={() => setModal(false)}>
           <div className={styles.modal} onClick={e => e.stopPropagation()}>
             <div className="label" style={{ marginBottom: 6 }}>Reservas</div>
-            <h2 className={styles.modalTitle}>Nova Reserva</h2>
+            <div className={styles.modalHeader}>
+              <h2 className={styles.modalTitle}>Nova Reserva</h2>
+              <div className={styles.infoWrap}>
+                <span className={styles.infoIcon}>i</span>
+                <div className={styles.infoTooltip}>Reservas em blocos de 1 hora. Usa os botões de duração rápida para preencher a hora de fim.</div>
+              </div>
+            </div>
             <div className={styles.hourRule}>Reservas em blocos de 1 hora (hora cheia).</div>
 
             <div className={styles.fields}>
@@ -360,7 +366,13 @@ export default function Reservas() {
               </div>
 
               <div className={styles.quickHours}>
-                <span className="label">Duração rápida</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="label">Duração rápida</span>
+                  <div className={styles.infoWrapSmall}>
+                    <span className={styles.infoIconSmall}>i</span>
+                    <div className={styles.infoTooltip}>Adiciona horas à data de início (ex: 4h = +4 horas).</div>
+                  </div>
+                </div>
                 <div className={styles.quickHoursButtons}>
                   <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(4)}>4h</button>
                   <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(8)}>8h</button>
@@ -377,9 +389,9 @@ export default function Reservas() {
             {formErro && <div className={styles.formErro}>{formErro}</div>}
 
             <div className={styles.modalActions}>
-              <button className={styles.btnSecondary} onClick={() => { setModal(false); setFormErro('') }}>Cancelar</button>
+              <button className={styles.btnSecondary} onClick={() => { setModal(false); setFormErro('') }}>✕ Cancelar</button>
               <button className={styles.btnPrimary} onClick={handleSubmit} disabled={saving}>
-                {saving ? 'A guardar…' : 'Criar Reserva'}
+                {saving ? 'A guardar…' : '✓ Criar Reserva'}
               </button>
             </div>
           </div>

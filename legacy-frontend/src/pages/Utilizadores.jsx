@@ -66,11 +66,7 @@ export default function Utilizadores() {
     }
   }
 
-  const handleEditar = (ut) => {
-    setForm({ nome: ut.nome || '', numero_colaborador: ut.numero_colaborador || '', departamento: ut.departamento || '', role: ut.role || 'user' })
-    setEditingId(ut.id)
-    setModal(true)
-  }
+  
 
   const handleEliminar = async (id, nome) => {
     if (!window.confirm(`Eliminar o utilizador "${nome}"?`)) return
@@ -255,7 +251,6 @@ export default function Utilizadores() {
                       {!editingRows[ut.id] ? (
                         <>
                           <button className={styles.btnSecondary} onClick={() => startInlineEdit(ut)}>Editar</button>
-                          <button className={styles.btnSecondary} onClick={() => handleEditar(ut)}>Abrir modal</button>
                         </>
                       ) : (
                         <>
