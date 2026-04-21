@@ -7,18 +7,21 @@ export default function UserMenu() {
   const [open, setOpen] = useState(false)
 
   if (!user) return null
-  const initials = user.iniciais || (user.nome ? user.nome.split(' ').map(p => p[0]).slice(0,2).join('').toUpperCase() : '')
-
   return (
     <div className={styles.wrap}>
       <button
         className={styles.trigger}
         onClick={() => setOpen((v) => !v)}
-        title={user.nome ? user.nome.split(' ')[0] : ''}
       >
-        <span className={styles.initials}>[{initials}]</span>
+        <span className={styles.name}>{user.nome}</span>
         <span className={styles.role}>{String(user.role).toUpperCase()}</span>
       </button>
+
+      {/* Styled tooltip (shows on hover) */}
+      <div className={styles.tooltip} role="tooltip">
+        <div className={styles.tooltipName}>{user.nome}</div>
+        <div className={styles.tooltipRole}>{String(user.role).toUpperCase()}</div>
+      </div>
 
       {open && (
         <div className={styles.dropdown}>
