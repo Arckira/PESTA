@@ -4,7 +4,6 @@ import { api } from '../api/index.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 import QRCodeDisplay from '../components/QRCode/QRCodeDisplay.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
-import { useSession } from '../session/SessionProvider.jsx'
 import styles from './DetalheEquipamento.module.css'
 
 const ESTADOS = ['Em funcionamento','NOK','Ocupado','Em calibração','Em manutenção']
@@ -24,7 +23,6 @@ export default function DetalheEquipamento() {
   const { id } = useParams()
   const navigate = useNavigate()
   const toast = useToast()
-  const { activeUser, openSessionModal } = useSession()
 
   const [eq, setEq] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -91,15 +89,9 @@ export default function DetalheEquipamento() {
   }
   
   const handleCheckin = async () => {
-    if (!activeUser) {
-      toast.info('Seleciona primeiro o utilizador ativo antes de iniciar o check-in.')
-      openSessionModal()
-      return
-    }
-
     try {
-      await api.iniciarCheckin(id, activeUser.nome);
-      toast.success(`Check-in iniciado por ${activeUser.nome}.`)
+      await api.iniciarCheckin(id);
+      toast.success('Check-in iniciado com sucesso.')
       carregar();
     } catch (e) { alert("Erro no Check-in: " + e.message); }
   };

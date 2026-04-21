@@ -41,6 +41,13 @@
   margin-bottom: 8px;
 }
 
+.logoLink {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
 .logoMark {
   width: 36px; height: 36px;
   background: var(--red);
@@ -119,6 +126,8 @@
 .sidebarFooter {
   padding: 16px 20px;
   border-top: 1px dashed var(--border);
+  display: grid;
+  gap: 10px;
 }
 
 /* ── Main ── */

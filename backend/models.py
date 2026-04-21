@@ -15,6 +15,11 @@ class EstadoEquipamento(str, Enum):
     EM_CALIBRACAO    = "Em calibração"
     EM_MANUTENCAO    = "Em manutenção"
 
+
+class RoleUtilizador(str, Enum):
+    USER = "user"
+    ADMIN = "admin"
+
 # ─────────────────────────────────────────────
 # EQUIPAMENTO
 # ─────────────────────────────────────────────
@@ -90,6 +95,10 @@ class Utilizador(SQLModel, table=True):
     nome:                str = Field(index=True)
     numero_colaborador:  str = Field(unique=True)
     departamento:        str
+    pin_hash:            str = ""
+    role:                RoleUtilizador = RoleUtilizador.USER
+    ativo:               bool = True
+    forcar_troca_pin:    bool = True
 
 # ─────────────────────────────────────────────
 # RESERVA
@@ -121,6 +130,8 @@ class SessaoUso(SQLModel, table=True):
     equipamento_id: int = Field(foreign_key="equipamento.id", index=True)
     # reserva_id pode ser None se o utilizador fizer check-in sem reserva prévia
     reserva_id:     Optional[int] = Field(default=None, foreign_key="reserva.id")
+    utilizador_id:  Optional[int] = Field(default=None, foreign_key="utilizador.id")
+    # Campo legado mantido por compatibilidade com histórico antigo.
     utilizador:     str
     inicio:         datetime = Field(default_factory=datetime.utcnow)
     fim:            Optional[datetime] = None

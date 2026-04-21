@@ -4,7 +4,6 @@ import { api } from '../api/index.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 import EmptyState from '../components/EmptyState.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
-import { downloadCsv } from '../utils/downloadCsv.js'
 import styles from './Equipamentos.module.css'
 import { createPortal } from 'react-dom';
 
@@ -48,6 +47,50 @@ export default function Equipamentos() {
   const [formErro, setFormErro] = useState('')
   const [touched, setTouched] = useState({})
   const [submittedOnce, setSubmittedOnce] = useState(false)
+
+  // Modal ficha técnica — abre ao clicar na linha
+  const [fichaModal, setFichaModal] = useState(null) // equipamento object
+  const [fichaEdit, setFichaEdit] = useState(false)
+  const [fichaForm, setFichaForm] = useState({})
+  const [savingFicha, setSavingFicha] = useState(false)
+
+  const abrirFicha = (eq) => {
+    setFichaModal(eq)
+    setFichaEdit(false)
+    setFichaForm({
+      fabricante:     eq.fabricante     || '',
+      modelo:         eq.modelo         || '',
+      ano_fabrico:    eq.ano_fabrico     || '',
+      potencia_kw:    eq.potencia_kw    || '',
+      notas_tecnicas: eq.notas_tecnicas || '',
+      range_temp:     eq.range_temp     || '',
+      foto_url:       eq.foto_url       || '',
+    })
+  }
+
+  const handleGuardarFicha = async () => {
+    setSavingFicha(true)
+    try {
+      await api.atualizarEquipamento(fichaModal.id, {
+        fabricante:     fichaForm.fabricante     || null,
+        modelo:         fichaForm.modelo         || null,
+        ano_fabrico:    fichaForm.ano_fabrico     ? parseInt(fichaForm.ano_fabrico) : null,
+        potencia_kw:    fichaForm.potencia_kw    ? parseFloat(fichaForm.potencia_kw) : null,
+        notas_tecnicas: fichaForm.notas_tecnicas || null,
+        range_temp:     fichaForm.range_temp     || null,
+        foto_url:       fichaForm.foto_url       || null,
+      })
+      toast.success('Ficha técnica actualizada com sucesso.')
+      setFichaEdit(false)
+      carregar()
+      // Actualiza o objecto local para a modal reflectir os novos valores
+      setFichaModal(prev => ({ ...prev, ...fichaForm }))
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível guardar a ficha técnica.')
+    } finally {
+      setSavingFicha(false)
+    }
+  }
 
   const carregar = () => {
     setLoading(true)
@@ -158,40 +201,28 @@ export default function Equipamentos() {
     }
   }
 
-  const fmtCsv = (dt) => {
-    if (!dt) return ''
-    const d = new Date(dt)
-    if (Number.isNaN(d.getTime())) return ''
-    // ISO-like para excel (sem timezone)
-    return d.toISOString().slice(0, 19).replace('T', ' ')
-  }
-
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!filtrados || filtrados.length === 0) return
 
-    const filename = `equipamentos-${new Date().toISOString().slice(0, 10)}.csv`
-    const rows = filtrados.map(eq => ({
-      id: String(eq.id).padStart(3, '0'),
-      nome: eq.nome,
-      tipo: eq.tipo,
-      localizacao: eq.localizacao,
-      estado: eq.estado_atual,
-      criado_em: fmtCsv(eq.criado_em),
-    }))
+    try {
+      const estadoSelecionado = filtroEstado === 'Todos' ? '' : filtroEstado
+      const blob = await api.exportarEquipamentosPdf({
+        filtro,
+        estado: estadoSelecionado,
+      })
 
-    downloadCsv({
-      filename,
-      rows,
-      delimiter: ';',
-      columns: [
-        { key: 'id', header: '#' },
-        { key: 'nome', header: 'Nome' },
-        { key: 'tipo', header: 'Tipo' },
-        { key: 'localizacao', header: 'Localização' },
-        { key: 'estado', header: 'Estado' },
-        { key: 'criado_em', header: 'Registado em' },
-      ],
-    })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `equipamentos-${new Date().toISOString().slice(0, 10)}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      toast.success('PDF exportado com sucesso.')
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível exportar o PDF.')
+    }
   }
 
   const handleEliminar = async (eq) => {
@@ -244,7 +275,7 @@ export default function Equipamentos() {
           disabled={filtrados.length === 0}
           type="button"
         >
-          Exportar CSV
+          Exportar PDF
         </button>
       </div>
 
@@ -274,7 +305,11 @@ export default function Equipamentos() {
               </thead>
               <tbody>
                 {filtrados.map(eq => (
-                  <tr key={eq.id}>
+                  <tr
+                    key={eq.id}
+                    onClick={() => abrirFicha(eq)}
+                    className={styles.trClickable}
+                  >
                     <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(eq.id).padStart(3,'0')}</td>
                     <td style={{ fontWeight: 500 }}>{eq.nome}</td>
                     <td style={{ color: 'var(--text-secondary)' }}>{eq.tipo}</td>
@@ -442,6 +477,119 @@ export default function Equipamentos() {
         </div>,
         document.body // <-- O destino do Portal!
       )}
+
+      {/* Modal Ficha Técnica */}
+      {fichaModal && createPortal(
+        <div className={styles.overlay} onClick={() => { setFichaModal(null); setFichaEdit(false) }}>
+          <div className={styles.modal} onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+
+            {/* Cabeçalho */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+              <div>
+                <div className="label" style={{ marginBottom: 4 }}>Ficha Técnica</div>
+                <h2 className={styles.modalTitle} style={{ marginBottom: 2 }}>{fichaModal.nome}</h2>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                  {fichaModal.codigo} · {fichaModal.tipo} · {fichaModal.localizacao}
+                </div>
+              </div>
+              <StatusBadge estado={fichaModal.estado_atual} />
+            </div>
+
+            {/* Foto (se existir) */}
+            {fichaModal.foto_url && !fichaEdit && (
+              <img
+                src={fichaModal.foto_url}
+                alt={fichaModal.nome}
+                style={{ width: '100%', maxHeight: 180, objectFit: 'cover', borderRadius: 'var(--radius)', marginBottom: 16 }}
+                onError={e => { e.target.style.display = 'none' }}
+              />
+            )}
+
+            {/* Conteúdo — modo visualização */}
+            {!fichaEdit && (
+              <div className={styles.fichaGrid}>
+                <FichaItem label="Fabricante"       value={fichaModal.fabricante} />
+                <FichaItem label="Modelo"           value={fichaModal.modelo} />
+                <FichaItem label="Ano de Fabrico"   value={fichaModal.ano_fabrico} />
+                <FichaItem label="Potência (kW)"    value={fichaModal.potencia_kw} />
+                <FichaItem label="Range Temp. Cal." value={fichaModal.range_temp} />
+                <FichaItem label="URL Foto"         value={fichaModal.foto_url} />
+                {fichaModal.notas_tecnicas && (
+                  <div className={styles.fichaNotas}>
+                    <div className="label" style={{ marginBottom: 6 }}>Notas Técnicas</div>
+                    <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                      {fichaModal.notas_tecnicas}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Conteúdo — modo edição */}
+            {fichaEdit && (
+              <div className={styles.fields}>
+                {[
+                  ['fabricante',     'Fabricante',           'text',   'ex: Aralab'],
+                  ['modelo',         'Modelo',               'text',   'ex: Fitoclima 300'],
+                  ['ano_fabrico',    'Ano de Fabrico',       'number', 'ex: 2018'],
+                  ['potencia_kw',    'Potência (kW)',         'number', 'ex: 2.5'],
+                  ['range_temp',     'Range Temp. Calibração','text',  'ex: -40°C a +180°C'],
+                  ['foto_url',       'URL da Foto',          'url',    'https://...'],
+                ].map(([key, label, type, placeholder]) => (
+                  <label key={key} className={styles.field}>
+                    <span className="label">{label}</span>
+                    <input
+                      type={type}
+                      className={styles.input}
+                      value={fichaForm[key]}
+                      placeholder={placeholder}
+                      onChange={e => setFichaForm(f => ({ ...f, [key]: e.target.value }))}
+                    />
+                  </label>
+                ))}
+                <label className={styles.field}>
+                  <span className="label">Notas Técnicas</span>
+                  <textarea
+                    className={styles.input}
+                    rows={3}
+                    value={fichaForm.notas_tecnicas}
+                    placeholder="Informações relevantes sobre o equipamento…"
+                    onChange={e => setFichaForm(f => ({ ...f, notas_tecnicas: e.target.value }))}
+                    style={{ resize: 'vertical', fontFamily: 'var(--font-body)' }}
+                  />
+                </label>
+              </div>
+            )}
+
+            {/* Acções */}
+            <div className={styles.modalActions}>
+              <button className={styles.btnSecondary} onClick={() => { setFichaModal(null); setFichaEdit(false) }}>
+                Fechar
+              </button>
+              {!fichaEdit ? (
+                <button className={styles.btnPrimary} onClick={() => setFichaEdit(true)}>
+                  ✎ Editar Ficha
+                </button>
+              ) : (
+                <button className={styles.btnPrimary} onClick={handleGuardarFicha} disabled={savingFicha}>
+                  {savingFicha ? 'A guardar…' : '✓ Guardar'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </div>
+  )
+}
+
+function FichaItem({ label, value }) {
+  if (!value) return null
+  return (
+    <div className="fichaItem">
+      <div className="label" style={{ marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{value}</div>
     </div>
   )
 }

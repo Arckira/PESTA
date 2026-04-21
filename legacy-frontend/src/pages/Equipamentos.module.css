@@ -297,3 +297,27 @@
   from { transform: translateY(16px); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }
 }
+
+/* --- Ficha Técnica Modal --- */
+.trClickable {
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.trClickable:hover td {
+  background: var(--bg-hover);
+}
+
+.fichaGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.fichaNotas {
+  grid-column: 1 / -1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}

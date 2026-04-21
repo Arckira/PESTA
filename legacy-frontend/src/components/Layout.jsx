@@ -1,6 +1,7 @@
-import { NavLink } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 import styles from './Layout.module.css'
-import { useSession } from '../session/SessionProvider.jsx'
+import UserMenu from './UserMenu.jsx'
+import { useAuth } from '../contexts/AuthContext.jsx'
 
 const NAV = [
   { to: '/',              icon: '⬡', label: 'Dashboard' },
@@ -13,25 +14,18 @@ const NAV = [
 ]
 
 export default function Layout({ children }) {
-  const {
-    activeUser,
-    roleLabel,
-    hasActiveSession,
-    remainingLabel,
-    isExpiringSoon,
-    openSessionModal,
-    changeUser,
-  } = useSession()
+  const { user } = useAuth()
 
   return (
     <div className={styles.shell}>
       <aside className={styles.sidebar}>
         <div className={styles.logo}>
-          <span className={styles.logoMark}>YZ</span>
-          <div>
-  
-            <div className={styles.logoSub}>Testing Centre</div>
-          </div>
+          <Link to="/" className={styles.logoLink} aria-label="Ir para o dashboard">
+            <span className={styles.logoMark}>YZ</span>
+            <div>
+              <div className={styles.logoSub}>Testing Centre</div>
+            </div>
+          </Link>
         </div>
 
         <nav className={styles.nav}>
@@ -51,6 +45,7 @@ export default function Layout({ children }) {
         </nav>
 
         <div className={styles.sidebarFooter}>
+          <UserMenu />
           <div className="label">v0.3.0 — LAB</div>
         </div>
       </aside>
@@ -60,27 +55,14 @@ export default function Layout({ children }) {
           <div className={styles.sessionPanel}>
             <div className={styles.sessionIdentity}>
               <div className="label">Utilizador ativo</div>
-              {hasActiveSession ? (
+              {user ? (
                 <div className={styles.sessionNameRow}>
-                  <strong className={styles.sessionName}>{activeUser.nome}</strong>
-                  <span className={styles.sessionRole}>{roleLabel}</span>
+                  <strong className={styles.sessionName}>{user.nome}</strong>
+                  <span className={styles.sessionRole}>{String(user.role).toUpperCase()}</span>
                 </div>
               ) : (
                 <div className={styles.sessionPlaceholder}>Sem sessão ativa</div>
               )}
-            </div>
-
-            <div className={styles.sessionActions}>
-              <div className={`${styles.timeoutBadge} ${isExpiringSoon ? styles.timeoutWarning : ''}`}>
-                Sessão expira em: {remainingLabel || '—'}
-              </div>
-              <button
-                type="button"
-                className={styles.userButton}
-                onClick={hasActiveSession ? changeUser : openSessionModal}
-              >
-                {hasActiveSession ? 'Mudar utilizador' : 'Selecionar utilizador'}
-              </button>
             </div>
           </div>
         </div>

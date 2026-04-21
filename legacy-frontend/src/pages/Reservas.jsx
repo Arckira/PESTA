@@ -6,6 +6,7 @@ import interactionPlugin from '@fullcalendar/interaction'
 import ptLocale from '@fullcalendar/core/locales/pt'
 import { api } from '../api/index.js'
 import { useToast } from '../components/ToastProvider.jsx'
+import { useAuth } from '../contexts/AuthContext.jsx'
 import styles from './Reservas.module.css'
 
 // Paleta de cores por equipamento (rotativa)
@@ -19,6 +20,7 @@ const CORES = [
 
 export default function Reservas() {
   const toast = useToast()
+  const { user } = useAuth()
   const [eventos, setEventos] = useState([])
   const [equipamentos, setEquipamentos] = useState([])
   const [utilizadores, setUtilizadores] = useState([])
@@ -55,7 +57,7 @@ export default function Reservas() {
       const [reservas, eqs, uts] = await Promise.all([
         api.listarReservas(),
         api.listarEquipamentos(),
-        api.listarUtilizadores(),
+        user?.role === 'admin' ? api.listarUtilizadores() : Promise.resolve([]),
       ])
       setEquipamentos(eqs)
       setUtilizadores(uts)
@@ -83,7 +85,15 @@ export default function Reservas() {
     }
   }
 
-  useEffect(() => { carregar() }, [])
+  useEffect(() => { carregar() }, [user?.role])
+
+  useEffect(() => {
+    if (modal && utilizadores.length === 0 && user) {
+      api.listarUtilizadores()
+        .then(setUtilizadores)
+        .catch((e) => toast.error(`Falha ao carregar utilizadores: ${e.message}`))
+    }
+  }, [modal, utilizadores.length, user])
 
   // Clique num dia — abre dropdown com utilizadores reservados nesse dia
   const handleDateClick = async (info) => {

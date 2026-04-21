@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/index.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
+import { useAuth } from '../contexts/AuthContext.jsx'
 import styles from './Dashboard.module.css'
 import FullCalendar from '@fullcalendar/react'
 import resourceTimelinePlugin from '@fullcalendar/resource-timeline'
@@ -13,6 +14,7 @@ const ESTADOS = ['Em funcionamento', 'NOK', 'Ocupado', 'Em calibração', 'Em ma
 export default function Dashboard() {
   const toast = useToast()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [equipamentos, setEquipamentos] = useState([])
   const [loading, setLoading] = useState(true)
   const [reservas, setReservas] = useState([])
@@ -31,14 +33,18 @@ export default function Dashboard() {
   const carregarDados = async () => {
     setLoading(true)
     try {
-      const [eqs, ress, utils] = await Promise.all([
+      const [eqs, ress] = await Promise.all([
         api.listarEquipamentos(),
         api.listarReservas(),
-        api.listarUtilizadores(),
       ])
       setEquipamentos(eqs || [])
       setReservas(ress || [])
-      setUtilizadores(utils || [])
+      if (user?.role === 'admin') {
+        const utils = await api.listarUtilizadores()
+        setUtilizadores(utils || [])
+      } else {
+        setUtilizadores([])
+      }
     } catch (e) {
       setErro(e.message)
       toast.error(`Falha ao carregar dashboard: ${e.message}`)
@@ -97,7 +103,7 @@ export default function Dashboard() {
     }
   }
 
-  useEffect(() => { carregarDados() }, [])
+  useEffect(() => { carregarDados() }, [user?.role])
 
   const { total, nok, ok, calib, manut, ocupados, recentes } = useMemo(() => {
     const list = equipamentos || []

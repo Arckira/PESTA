@@ -3,17 +3,17 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import { ToastProvider } from './components/ToastProvider.jsx'
-import { SessionProvider } from './session/SessionProvider.jsx'
+import { AuthProvider } from './contexts/AuthContext.jsx'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <ToastProvider>
-      <SessionProvider>
+    <AuthProvider>
+      <ToastProvider>
         <BrowserRouter>
           <App />
         </BrowserRouter>
-      </SessionProvider>
-    </ToastProvider>
+      </ToastProvider>
+    </AuthProvider>
   </React.StrictMode>
 )

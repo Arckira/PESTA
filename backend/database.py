@@ -1,5 +1,4 @@
 from sqlmodel import SQLModel, create_engine, Session
-from sqlalchemy import inspect
 import os
 
 # Define o caminho do ficheiro da base de dados
@@ -10,39 +9,48 @@ sqlite_url = f"sqlite:///{sqlite_file_name}"
 # O 'check_same_thread=False' e necessario para o FastAPI
 engine = create_engine(sqlite_url, connect_args={"check_same_thread": False})
 
-_EQUIPAMENTO_COLUMN_MIGRATIONS = {
-    "numero_serie": "ALTER TABLE equipamento ADD COLUMN numero_serie VARCHAR",
-    "ligacao_eletrica": "ALTER TABLE equipamento ADD COLUMN ligacao_eletrica VARCHAR",
-    "corrente_a": "ALTER TABLE equipamento ADD COLUMN corrente_a FLOAT",
-    "voltagem_v": "ALTER TABLE equipamento ADD COLUMN voltagem_v FLOAT",
-    "peso_kg": "ALTER TABLE equipamento ADD COLUMN peso_kg FLOAT",
-    "peso_max_kg": "ALTER TABLE equipamento ADD COLUMN peso_max_kg FLOAT",
-}
+def _colunas_tabela(conn, tabela: str) -> set[str]:
+    resultado = conn.exec_driver_sql(f"PRAGMA table_info({tabela})")
+    return {linha[1] for linha in resultado}
 
 
-def _migrar_colunas_equipamento():
-    inspector = inspect(engine)
-    if "equipamento" not in inspector.get_table_names():
-        return
+def _garantir_coluna(conn, tabela: str, coluna: str, definicao: str):
+    colunas = _colunas_tabela(conn, tabela)
+    if coluna not in colunas:
+        conn.exec_driver_sql(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {definicao}")
 
-    existentes = {col["name"] for col in inspector.get_columns("equipamento")}
-    pendentes = [
-        ddl for coluna, ddl in _EQUIPAMENTO_COLUMN_MIGRATIONS.items()
-        if coluna not in existentes
-    ]
-    if not pendentes:
-        return
 
+def _executar_migracoes_sqlite():
     with engine.begin() as conn:
-        for ddl in pendentes:
-            conn.exec_driver_sql(ddl)
+        tabelas = {
+            row[0]
+            for row in conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")
+        }
 
+        # Auth em utilizador
+        if "utilizador" in tabelas:
+            _garantir_coluna(conn, "utilizador", "pin_hash", "TEXT NOT NULL DEFAULT ''")
+            _garantir_coluna(conn, "utilizador", "role", "TEXT NOT NULL DEFAULT 'user'")
+            _garantir_coluna(conn, "utilizador", "ativo", "INTEGER NOT NULL DEFAULT 1")
+            _garantir_coluna(conn, "utilizador", "forcar_troca_pin", "INTEGER NOT NULL DEFAULT 1")
+
+        # Sessão autenticada vinculada ao utilizador
+        if "sessaouso" in tabelas:
+            _garantir_coluna(conn, "sessaouso", "utilizador_id", "INTEGER")
+
+        # Campos técnicos de equipamento
+        if "equipamento" in tabelas:
+            _garantir_coluna(conn, "equipamento", "numero_serie", "VARCHAR")
+            _garantir_coluna(conn, "equipamento", "ligacao_eletrica", "VARCHAR")
+            _garantir_coluna(conn, "equipamento", "corrente_a", "FLOAT")
+            _garantir_coluna(conn, "equipamento", "voltagem_v", "FLOAT")
+            _garantir_coluna(conn, "equipamento", "peso_kg", "FLOAT")
+            _garantir_coluna(conn, "equipamento", "peso_max_kg", "FLOAT")
 
 def criar_tabelas():
     """Cria as tabelas na base de dados se nao existirem."""
     SQLModel.metadata.create_all(engine)
-    _migrar_colunas_equipamento()
-
+    _executar_migracoes_sqlite()
 
 def get_session():
     """Gera uma sessao para cada pedido a API (Dependency Injection)."""
