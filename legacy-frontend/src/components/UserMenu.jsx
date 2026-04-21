@@ -14,7 +14,7 @@ export default function UserMenu() {
       <button
         className={styles.trigger}
         onClick={() => setOpen((v) => !v)}
-        title={`${user.nome} (${String(user.role).toUpperCase()})`}
+        title={user.nome ? user.nome.split(' ')[0] : ''}
       >
         <span className={styles.initials}>[{initials}]</span>
         <span className={styles.role}>{String(user.role).toUpperCase()}</span>
