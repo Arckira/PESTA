@@ -315,6 +315,12 @@ class UtilizadorCreate(BaseModel):
     role: RoleUtilizador = RoleUtilizador.USER
 
 
+class UtilizadorUpdate(BaseModel):
+    nome: Optional[str] = None
+    numero_colaborador: Optional[str] = None
+    departamento: Optional[str] = None
+
+
 class LoginRequest(BaseModel):
     user_id: int
     pin: str
@@ -1180,6 +1186,24 @@ def eliminar_utilizador(
     session.add(ut)
     session.commit()
     return {"mensagem": "Utilizador desativado"}
+
+
+@app.patch("/utilizadores/{utilizador_id}")
+def atualizar_utilizador(
+    utilizador_id: int,
+    dados: UtilizadorUpdate,
+    session: Session = Depends(get_session),
+    admin: Utilizador = Depends(exigir_admin),
+):
+    """Partial update: nome, numero_colaborador, departamento"""
+    _ = admin
+    ut = _obter_ou_404(session, Utilizador, utilizador_id, "Utilizador não encontrado")
+    for campo, valor in dados.model_dump(exclude_unset=True).items():
+        setattr(ut, campo, valor)
+    session.add(ut)
+    session.commit()
+    session.refresh(ut)
+    return ut
 
 
 @app.patch("/utilizadores/{utilizador_id}/pin")

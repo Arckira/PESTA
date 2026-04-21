@@ -133,6 +133,7 @@ export const api = {
   // ── Utilizadores ──
   listarUtilizadores:     ()              => request('/utilizadores'),
   criarUtilizador:        (data)          => request('/utilizadores', { method: 'POST', body: JSON.stringify(data) }),
+  atualizarUtilizador:    (id, data)      => request(`/utilizadores/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   adminAlterarPinUtilizador: (id, novo_pin) => request(`/utilizadores/${id}/pin`, { method: 'PATCH', body: JSON.stringify({ novo_pin }) }),
   adminAlterarRoleUtilizador: (id, role, pin_atual) => request(`/utilizadores/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role, pin_atual }) }),
   eliminarUtilizador:     (id)            => request(`/utilizadores/${id}`, { method: 'DELETE' }),

@@ -13,6 +13,7 @@ export default function Utilizadores() {
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(EMPTY)
+  const [editingId, setEditingId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [formErro, setFormErro] = useState('')
   const [roleDrafts, setRoleDrafts] = useState({})
@@ -45,10 +46,16 @@ export default function Utilizadores() {
     setSaving(true)
     setFormErro('')
     try {
-      await api.criarUtilizador(form)
-      toast.success('Utilizador criado com sucesso.')
+      if (editingId) {
+        await api.atualizarUtilizador(editingId, form)
+        toast.success('Utilizador atualizado com sucesso.')
+      } else {
+        await api.criarUtilizador(form)
+        toast.success('Utilizador criado com sucesso.')
+      }
       setModal(false)
       setForm(EMPTY)
+      setEditingId(null)
       carregar()
     } catch (e) {
       setFormErro(e.message)
@@ -56,6 +63,12 @@ export default function Utilizadores() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleEditar = (ut) => {
+    setForm({ nome: ut.nome || '', numero_colaborador: ut.numero_colaborador || '', departamento: ut.departamento || '', role: ut.role || 'user' })
+    setEditingId(ut.id)
+    setModal(true)
   }
 
   const handleEliminar = async (id, nome) => {
@@ -184,6 +197,7 @@ export default function Utilizadores() {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                      <button className={styles.btnSecondary} onClick={() => handleEditar(ut)}>Editar</button>
                       <button
                         className={styles.btnPrimary}
                         onClick={() => handleRoleChange(ut.id, roleDrafts[ut.id] || ut.role || 'user')}
