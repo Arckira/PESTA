@@ -19,6 +19,7 @@ export default function Utilizadores() {
   const [roleDrafts, setRoleDrafts] = useState({})
   const [rolePins, setRolePins] = useState({})
   const [roleSavingId, setRoleSavingId] = useState(null)
+  const [editingRows, setEditingRows] = useState({})
 
   const carregar = () => {
     if (user?.role !== 'admin') {
@@ -84,19 +85,55 @@ export default function Utilizadores() {
 
   const handleRoleChange = async (id, role) => {
     const pin_atual = (rolePins[id] || '').trim()
-    if (!/^\d{4}$/.test(pin_atual)) {
-      toast.error('Confirma o PIN do administrador com 4 dígitos.')
-      return
-    }
-
     setRoleSavingId(id)
     try {
-      await api.adminAlterarRoleUtilizador(id, role, pin_atual)
+      if (/^\d{4}$/.test(pin_atual)) {
+        // Legacy: admin can confirm with PIN (keeps existing secured flow)
+        await api.adminAlterarRoleUtilizador(id, role, pin_atual)
+      } else {
+        // Inline update without PIN (authenticated admin)
+        await api.atualizarUtilizador(id, { role })
+      }
       toast.success('Permissões atualizadas com sucesso.')
       setRolePins((prev) => ({ ...prev, [id]: '' }))
       carregar()
     } catch (e) {
       toast.error(e.message || 'Não foi possível atualizar as permissões.')
+    } finally {
+      setRoleSavingId(null)
+    }
+  }
+
+  const startInlineEdit = (ut) => {
+    setEditingRows((prev) => ({
+      ...prev,
+      [ut.id]: { nome: ut.nome || '', numero_colaborador: ut.numero_colaborador || '', departamento: ut.departamento || '' }
+    }))
+  }
+
+  const cancelInlineEdit = (id) => {
+    setEditingRows((prev) => {
+      const copy = { ...prev }
+      delete copy[id]
+      return copy
+    })
+  }
+
+  const saveInlineEdit = async (id) => {
+    const draft = editingRows[id]
+    if (!draft) return
+    if (!draft.nome || !draft.numero_colaborador || !draft.departamento) {
+      toast.error('Todos os campos são obrigatórios.')
+      return
+    }
+    try {
+      setRoleSavingId(id)
+      await api.atualizarUtilizador(id, draft)
+      toast.success('Utilizador atualizado com sucesso.')
+      setEditingRows((prev) => { const c = { ...prev }; delete c[id]; return c })
+      carregar()
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível atualizar o utilizador.')
     } finally {
       setRoleSavingId(null)
     }
@@ -170,9 +207,27 @@ export default function Utilizadores() {
               {utilizadores.map(ut => (
                 <tr key={ut.id}>
                   <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(ut.id).padStart(3,'0')}</td>
-                  <td style={{ fontWeight: 500 }}>{ut.nome}</td>
-                  <td className="mono" style={{ color: 'var(--text-secondary)' }}>{ut.numero_colaborador}</td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{ut.departamento}</td>
+                  <td style={{ fontWeight: 500 }}>
+                    {editingRows[ut.id] ? (
+                      <input className={styles.input} value={editingRows[ut.id].nome} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], nome: e.target.value } }))} />
+                    ) : (
+                      ut.nome
+                    )}
+                  </td>
+                  <td className="mono" style={{ color: 'var(--text-secondary)' }}>
+                    {editingRows[ut.id] ? (
+                      <input className={styles.input} value={editingRows[ut.id].numero_colaborador} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], numero_colaborador: e.target.value } }))} />
+                    ) : (
+                      ut.numero_colaborador
+                    )}
+                  </td>
+                  <td style={{ color: 'var(--text-secondary)' }}>
+                    {editingRows[ut.id] ? (
+                      <input className={styles.input} value={editingRows[ut.id].departamento} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], departamento: e.target.value } }))} />
+                    ) : (
+                      ut.departamento
+                    )}
+                  </td>
                   <td>
                     <select
                       className={styles.input}
@@ -197,7 +252,17 @@ export default function Utilizadores() {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                      <button className={styles.btnSecondary} onClick={() => handleEditar(ut)}>Editar</button>
+                      {!editingRows[ut.id] ? (
+                        <>
+                          <button className={styles.btnSecondary} onClick={() => startInlineEdit(ut)}>Editar</button>
+                          <button className={styles.btnSecondary} onClick={() => handleEditar(ut)}>Abrir modal</button>
+                        </>
+                      ) : (
+                        <>
+                          <button className={styles.btnPrimary} onClick={() => saveInlineEdit(ut.id)} disabled={roleSavingId === ut.id}>{roleSavingId === ut.id ? 'A guardar…' : 'Guardar'}</button>
+                          <button className={styles.btnSecondary} onClick={() => cancelInlineEdit(ut.id)}>Cancelar</button>
+                        </>
+                      )}
                       <button
                         className={styles.btnPrimary}
                         onClick={() => handleRoleChange(ut.id, roleDrafts[ut.id] || ut.role || 'user')}
