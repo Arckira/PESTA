@@ -362,9 +362,9 @@ export default function Reservas() {
               <div className={styles.quickHours}>
                 <span className="label">Duração rápida</span>
                 <div className={styles.quickHoursButtons}>
-                  <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(1)}>+1h</button>
-                  <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(2)}>+2h</button>
-                  <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(4)}>+4h</button>
+                  <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(4)}>4h</button>
+                  <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(8)}>8h</button>
+                  <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(16)}>16h</button>
                 </div>
               </div>
 
