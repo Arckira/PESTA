@@ -11,11 +11,7 @@ export default function Utilizadores() {
   const { user, isLoading: authLoading, openAuthPrompt, openBootstrapPrompt, bootstrapAvailable } = useAuth()
   const [utilizadores, setUtilizadores] = useState([])
   const [loading, setLoading] = useState(true)
-  const [modal, setModal] = useState(false)
-  const [form, setForm] = useState(EMPTY)
-  const [editingId, setEditingId] = useState(null)
   const [saving, setSaving] = useState(false)
-  const [formErro, setFormErro] = useState('')
   const [roleDrafts, setRoleDrafts] = useState({})
   const [rolePins, setRolePins] = useState({})
   const [roleSavingId, setRoleSavingId] = useState(null)
@@ -37,34 +33,6 @@ export default function Utilizadores() {
   }
 
   useEffect(() => { carregar() }, [user?.role])
-
-  const handleSubmit = async () => {
-    if (!form.nome || !form.numero_colaborador || !form.departamento) {
-      setFormErro('Todos os campos são obrigatórios.')
-      toast.error('Preenche todos os campos obrigatórios.')
-      return
-    }
-    setSaving(true)
-    setFormErro('')
-    try {
-      if (editingId) {
-        await api.atualizarUtilizador(editingId, form)
-        toast.success('Utilizador atualizado com sucesso.')
-      } else {
-        await api.criarUtilizador(form)
-        toast.success('Utilizador criado com sucesso.')
-      }
-      setModal(false)
-      setForm(EMPTY)
-      setEditingId(null)
-      carregar()
-    } catch (e) {
-      setFormErro(e.message)
-      toast.error(e.message || 'Não foi possível criar o utilizador.')
-    } finally {
-      setSaving(false)
-    }
-  }
 
   
 
@@ -107,6 +75,10 @@ export default function Utilizadores() {
     }))
   }
 
+  const startCreateRow = () => {
+    setEditingRows((prev) => ({ ...prev, new: { nome: '', numero_colaborador: '', departamento: '', role: 'user' } }))
+  }
+
   const cancelInlineEdit = (id) => {
     setEditingRows((prev) => {
       const copy = { ...prev }
@@ -124,8 +96,13 @@ export default function Utilizadores() {
     }
     try {
       setRoleSavingId(id)
-      await api.atualizarUtilizador(id, draft)
-      toast.success('Utilizador atualizado com sucesso.')
+      if (id === 'new') {
+        await api.criarUtilizador(draft)
+        toast.success('Utilizador criado com sucesso.')
+      } else {
+        await api.atualizarUtilizador(id, draft)
+        toast.success('Utilizador atualizado com sucesso.')
+      }
       setEditingRows((prev) => { const c = { ...prev }; delete c[id]; return c })
       carregar()
     } catch (e) {
@@ -173,12 +150,12 @@ export default function Utilizadores() {
 
   return (
     <div className="fade-up">
-      <div className={styles.header}>
+        <div className={styles.header}>
         <div>
           <div className="label">Gestão</div>
           <h1 className={styles.title}>Utilizadores</h1>
         </div>
-        <button className={styles.btnPrimary} onClick={() => setModal(true)}>
+        <button className={styles.btnPrimary} onClick={() => startCreateRow()}>
           + Novo Utilizador
         </button>
       </div>
@@ -280,42 +257,7 @@ export default function Utilizadores() {
         </div>
       )}
 
-      {modal && (
-        <div className={styles.overlay} onClick={() => setModal(false)}>
-          <div className={styles.modal} onClick={e => e.stopPropagation()}>
-            <div className="label" style={{ marginBottom: 6 }}>Utilizadores</div>
-            <h2 className={styles.modalTitle}>Novo Utilizador</h2>
-            <div className={styles.fields}>
-              <label className={styles.field}>
-                <span className="label">Nome *</span>
-                <input className={styles.input} value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} placeholder="ex: João Silva" />
-              </label>
-              <label className={styles.field}>
-                <span className="label">Nº Colaborador *</span>
-                <input className={styles.input} value={form.numero_colaborador} onChange={e => setForm(f => ({ ...f, numero_colaborador: e.target.value }))} placeholder="ex: YZ-1042" />
-              </label>
-              <label className={styles.field}>
-                <span className="label">Departamento *</span>
-                <input className={styles.input} value={form.departamento} onChange={e => setForm(f => ({ ...f, departamento: e.target.value }))} placeholder="ex: Testing Centre" />
-              </label>
-              <label className={styles.field}>
-                <span className="label">Role *</span>
-                <select className={styles.input} value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-                  <option value="user">user</option>
-                  <option value="admin">admin</option>
-                </select>
-              </label>
-            </div>
-            {formErro && <div className={styles.formErro}>{formErro}</div>}
-            <div className={styles.modalActions}>
-              <button className={styles.btnSecondary} onClick={() => { setModal(false); setFormErro('') }}>Cancelar</button>
-              <button className={styles.btnPrimary} onClick={handleSubmit} disabled={saving}>
-                {saving ? 'A guardar…' : 'Criar'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* modal removed: inline creation/editing used instead */}
     </div>
   )
 }
