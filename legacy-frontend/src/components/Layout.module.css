@@ -63,16 +63,18 @@
   align-items: center;
   justify-content: center;
   font-family: var(--font-display);
-  font-size: 20px;
-  font-weight: 800;
+  font-size: 22px;
+  font-weight: 900;
   border-radius: 12px;
   flex-shrink: 0;
   box-shadow: 0 8px 20px rgba(200,16,46,0.28);
 }
 
 .logoMain {
-  font-size: 20px;
-  letter-spacing: 0.06em;
+  font-size: 22px;
+  letter-spacing: 0.12em;
+  color: #fff;
+  text-transform: uppercase;
 }
 
 .logoSubOutside {
@@ -81,6 +83,21 @@
   color: #9ca3af;
   margin-top: 8px;
   text-transform: none;
+}
+
+/* Ensure subtitle does not overlap the mark */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px 20px;
+}
+
+.logoImg {
+  width: 96px;
+  height: 96px;
+  display: block;
+  object-fit: contain;
 }
 
 .logoTitle {

@@ -21,10 +21,10 @@ export default function Layout({ children }) {
       <aside className={styles.sidebar}>
         <div className={styles.logo}>
           <Link to="/" className={styles.logoLink} aria-label="Ir para o dashboard">
-            <span className={styles.logoMark}>
-                <div className={styles.logoMain}>INDUSTRIAL TESTING LAB</div>
-                <div className={styles.logoSubOutside}>Testing Centre</div>
-            </span>
+            <div className={styles.logoBlock}>
+              <img src={require('../assets/industrial-testing-lab-logo.svg').default} alt="Industrial Testing Lab" className={styles.logoImg} />
+              <div className={styles.logoSubOutside}>Testing Centre</div>
+            </div>
           </Link>
         </div>
 
