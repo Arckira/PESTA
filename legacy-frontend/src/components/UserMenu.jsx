@@ -7,11 +7,16 @@ export default function UserMenu() {
   const [open, setOpen] = useState(false)
 
   if (!user) return null
+  const initials = user.iniciais || (user.nome ? user.nome.split(' ').map(p => p[0]).slice(0,2).join('').toUpperCase() : '')
 
   return (
     <div className={styles.wrap}>
-      <button className={styles.trigger} onClick={() => setOpen((v) => !v)}>
-        <span className={styles.name}>{user.nome}</span>
+      <button
+        className={styles.trigger}
+        onClick={() => setOpen((v) => !v)}
+        title={`${user.nome} (${String(user.role).toUpperCase()})`}
+      >
+        <span className={styles.initials}>[{initials}]</span>
         <span className={styles.role}>{String(user.role).toUpperCase()}</span>
       </button>
 

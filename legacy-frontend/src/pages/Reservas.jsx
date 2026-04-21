@@ -69,7 +69,7 @@ export default function Reservas() {
 
       const evs = reservas.map(r => ({
         id: String(r.id),
-        title: `${r.equipamento_codigo} — ${r.utilizador_nome}`,
+        title: r.utilizador_iniciais || (r.utilizador_nome ? r.utilizador_nome.split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase() : ''),
         start: r.data_inicio,
         end: r.data_fim,
         backgroundColor: corMap[r.equipamento_id]?.bg ?? '#1e3a5f',
@@ -241,6 +241,22 @@ export default function Reservas() {
           height="auto"
           eventDisplay="block"
           dayMaxEvents={3}
+          eventDidMount={(info) => {
+            // Mostrar apenas as iniciais no evento e tooltip com detalhes
+            const ev = info.event.extendedProps
+            const initials = info.event.title || (ev.utilizador_iniciais || '')
+            info.el.innerText = initials
+            const start = new Date(info.event.start)
+            const end = new Date(info.event.end)
+            const pad = (n) => String(n).padStart(2, '0')
+            const periodo = `${pad(start.getHours())}:${pad(start.getMinutes())} - ${pad(end.getHours())}:${pad(end.getMinutes())}`
+            const tooltip = `${ev.utilizador_nome}\n${ev.equipamento_nome}\n${periodo}`
+            info.el.setAttribute('title', tooltip)
+            info.el.style.fontWeight = '700'
+            info.el.style.padding = '6px'
+            info.el.style.borderRadius = '6px'
+            info.el.style.fontFamily = 'var(--font-mono)'
+          }}
         />
       </div>
 

@@ -123,6 +123,7 @@ def _listar_reservas_enriquecidas(session: Session):
             "equipamento_codigo": eq.codigo if eq else "—",
             "utilizador_id": r.utilizador_id,
             "utilizador_nome": ut.nome if ut else "—",
+            "utilizador_iniciais": (ut.iniciais if ut and ut.iniciais is not None else (ut.nome.split()[0][0] + (ut.nome.split()[-1][0] if len(ut.nome.split())>1 else '')).upper() if ut and ut.nome else ""),
             "projeto": r.projeto,
             "data_inicio": r.data_inicio,
             "data_fim": r.data_fim,
@@ -383,7 +384,7 @@ class EquipamentoCreate(BaseModel):
 @app.get("/auth/utilizadores", summary="Lista de utilizadores ativos para login")
 def listar_utilizadores_login(session: Session = Depends(get_session)):
     utilizadores = session.exec(select(Utilizador).where(Utilizador.ativo == True).order_by(Utilizador.nome)).all()
-    return [{"id": u.id, "nome": u.nome} for u in utilizadores]
+    return [{"id": u.id, "nome": u.nome, "iniciais": (u.iniciais if u.iniciais is not None else (u.nome.split()[0][0] + (u.nome.split()[-1][0] if len(u.nome.split())>1 else '')).upper() if u.nome else "")} for u in utilizadores]
 
 
 @app.post("/auth/login", summary="Login por utilizador + PIN")
@@ -416,6 +417,7 @@ def auth_login(dados: LoginRequest, session: Session = Depends(get_session)):
         "utilizador": {
             "id": utilizador.id,
             "nome": utilizador.nome,
+            "iniciais": utilizador.iniciais if utilizador.iniciais is not None else (utilizador.nome.split()[0][0] + (utilizador.nome.split()[-1][0] if len(utilizador.nome.split())>1 else '')).upper() if utilizador.nome else "",
             "role": utilizador.role,
             "forcar_troca_pin": utilizador.forcar_troca_pin,
         },
@@ -470,6 +472,7 @@ def auth_me(utilizador: Utilizador = Depends(obter_utilizador_atual)):
     return {
         "id": utilizador.id,
         "nome": utilizador.nome,
+        "iniciais": utilizador.iniciais if utilizador.iniciais is not None else (utilizador.nome.split()[0][0] + (utilizador.nome.split()[-1][0] if len(utilizador.nome.split())>1 else '')).upper() if utilizador.nome else "",
         "role": utilizador.role,
         "forcar_troca_pin": utilizador.forcar_troca_pin,
     }
@@ -1061,6 +1064,7 @@ def reservas_por_dia(data: str, session: Session = Depends(get_session)):
                 "equipamento_nome": eq.nome if eq else "—",
                 "utilizador_id": r.utilizador_id,
                 "utilizador_nome": ut.nome if ut else "—",
+                "utilizador_iniciais": (ut.iniciais if ut and ut.iniciais is not None else (ut.nome.split()[0][0] + (ut.nome.split()[-1][0] if len(ut.nome.split())>1 else '')).upper() if ut and ut.nome else ""),
                 "projeto": r.projeto,
             })
     return resultado

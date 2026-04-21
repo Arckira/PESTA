@@ -93,6 +93,7 @@ class Calibracao(SQLModel, table=True):
 class Utilizador(SQLModel, table=True):
     id:                  Optional[int] = Field(default=None, primary_key=True)
     nome:                str = Field(index=True)
+    iniciais:            Optional[str] = None
     numero_colaborador:  str = Field(unique=True)
     departamento:        str
     pin_hash:            str = ""

@@ -31,6 +31,7 @@ def _executar_migracoes_sqlite():
         if "utilizador" in tabelas:
             _garantir_coluna(conn, "utilizador", "pin_hash", "TEXT NOT NULL DEFAULT ''")
             _garantir_coluna(conn, "utilizador", "role", "TEXT NOT NULL DEFAULT 'user'")
+            _garantir_coluna(conn, "utilizador", "iniciais", "VARCHAR")
             _garantir_coluna(conn, "utilizador", "ativo", "INTEGER NOT NULL DEFAULT 1")
             _garantir_coluna(conn, "utilizador", "forcar_troca_pin", "INTEGER NOT NULL DEFAULT 1")
 
