@@ -48,56 +48,17 @@
   width: 100%;
 }
 
-.logoBlock {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
 .logoMark {
-  width: 90px;
-  height: 90px;
+  width: 36px; height: 36px;
   background: var(--red);
   color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   font-family: var(--font-display);
-  font-size: 22px;
-  font-weight: 900;
-  border-radius: 12px;
+  font-size: 20px;
+  font-weight: 700;
+  border-radius: 10px;
   flex-shrink: 0;
-  box-shadow: 0 8px 20px rgba(200,16,46,0.28);
-}
-
-.logoMain {
-  font-size: 22px;
-  letter-spacing: 0.12em;
-  color: #fff;
-  text-transform: uppercase;
-}
-
-.logoSubOutside {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: #9ca3af;
-  margin-top: 8px;
-  text-transform: none;
-}
-
-/* Ensure subtitle does not overlap the mark */
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 18px 20px 20px;
-}
-
-.logoImg {
-  width: 96px;
-  height: 96px;
-  display: block;
-  object-fit: contain;
+  box-shadow: 0 6px 16px rgba(200,16,46,0.25);
 }
 
 .logoTitle {
@@ -115,6 +76,14 @@
   color: #9ca3af;
   text-transform: uppercase;
   margin-top: 1px;
+}
+
+/* Ensure subtitle does not overlap the mark */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 20px 20px;
 }
 
 /* Nav */

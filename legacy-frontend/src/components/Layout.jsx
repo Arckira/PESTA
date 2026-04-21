@@ -21,9 +21,9 @@ export default function Layout({ children }) {
       <aside className={styles.sidebar}>
         <div className={styles.logo}>
           <Link to="/" className={styles.logoLink} aria-label="Ir para o dashboard">
-            <div className={styles.logoBlock}>
-              <img src={require('../assets/industrial-testing-lab-logo.svg').default} alt="Industrial Testing Lab" className={styles.logoImg} />
-              <div className={styles.logoSubOutside}>Testing Centre</div>
+            <span className={styles.logoMark}>YZ</span>
+            <div>
+              <div className={styles.logoSub}>Testing Centre</div>
             </div>
           </Link>
         </div>
