@@ -1,10 +1,10 @@
-/* Manutencoes.module.css */
-.header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
-.title { font-family: var(--font-display); font-size: 32px; font-weight: 700; letter-spacing: 0.03em; margin-top: 4px; }
+/* Mobile-first */
+.header { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; align-items: stretch; }
+.title { font-family: var(--font-display); font-size: 20px; font-weight: 700; letter-spacing: 0.02em; margin-top: 2px; }
 
-.tableWrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.tableWrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: auto; }
 
-.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 13px; }
 .table th {
   text-align: left; padding: 10px 14px;
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em;

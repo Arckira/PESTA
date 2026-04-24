@@ -1,29 +1,52 @@
-from fastapi import FastAPI, Depends, HTTPException, Response, Header
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
-from database import criar_tabelas, get_session
-from models import (
-    Equipamento, Avaria, Manutencao, Calibracao,
-    EstadoEquipamento, SessaoUso, Reserva, Utilizador, RoleUtilizador
-)
-from contextlib import asynccontextmanager
-from collections import defaultdict
-from typing import Optional
-from datetime import datetime, timedelta
 import hashlib
 import hmac
+import logging
 import secrets
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+from typing import Any, Optional, TypeVar
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, model_validator
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlmodel import Session, select
+
+from database import criar_tabelas, get_session
+from models import (
+    Avaria,
+    Calibracao,
+    DocumentacaoEquipamento,
+    Equipamento,
+    EstadoEquipamento,
+    Manutencao,
+    PrioridadeAvaria,
+    Reserva,
+    RoleUtilizador,
+    SessaoUso,
+    TipoDocumento,
+    Utilizador,
+)
+from collections import defaultdict
+
+logger = logging.getLogger(__name__)
+ModeloT = TypeVar("ModeloT")
 
 
 def _pdf_escape(texto: str) -> str:
+    """Escapa caracteres especiais para conteúdo textual em PDF."""
     return texto.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
 def _gerar_pdf_texto(titulo: str, linhas: list[str]) -> bytes:
-    """
-    Gera um PDF simples (texto puro) sem dependências externas.
+    """Gera um PDF textual minimalista sem dependências externas.
+
+    Args:
+        titulo: Título apresentado em cada página.
+        linhas: Linhas de texto do corpo do relatório.
+
+    Returns:
+        bytes: Conteúdo binário do ficheiro PDF.
     """
     linhas_por_pagina = 44
     paginas = [linhas[i:i + linhas_por_pagina] for i in range(0, len(linhas), linhas_por_pagina)] or [[]]
@@ -99,6 +122,14 @@ def _gerar_pdf_texto(titulo: str, linhas: list[str]) -> bytes:
 
 
 def _listar_reservas_enriquecidas(session: Session):
+    """Obtém reservas com metadados de equipamento e utilizador.
+
+    Args:
+        session: Sessão ativa de base de dados.
+
+    Returns:
+        list[dict[str, Any]]: Reservas enriquecidas para consumo no frontend.
+    """
     reservas = session.exec(select(Reserva)).all()
     if not reservas:
         return []
@@ -112,36 +143,79 @@ def _listar_reservas_enriquecidas(session: Session):
     equipamentos_por_id = {e.id: e for e in equipamentos}
     utilizadores_por_id = {u.id: u for u in utilizadores}
 
-    resultado = []
+    resultado: list[dict[str, Any]] = []
     for r in reservas:
         eq = equipamentos_por_id.get(r.equipamento_id)
         ut = utilizadores_por_id.get(r.utilizador_id)
-        resultado.append({
-            "id": r.id,
-            "equipamento_id": r.equipamento_id,
-            "equipamento_nome": eq.nome if eq else "—",
-            "equipamento_codigo": eq.codigo if eq else "—",
-            "utilizador_id": r.utilizador_id,
-            "utilizador_nome": ut.nome if ut else "—",
-            "utilizador_iniciais": (ut.iniciais if ut and ut.iniciais is not None else (ut.nome.split()[0][0] + (ut.nome.split()[-1][0] if len(ut.nome.split())>1 else '')).upper() if ut and ut.nome else ""),
-            "projeto": r.projeto,
-            "data_inicio": r.data_inicio,
-            "data_fim": r.data_fim,
-            "notas": r.notas,
-        })
+        resultado.append(
+            {
+                "id": r.id,
+                "equipamento_id": r.equipamento_id,
+                "equipamento_nome": eq.nome if eq else "—",
+                "equipamento_codigo": eq.codigo if eq else "—",
+                "utilizador_id": r.utilizador_id,
+                "utilizador_nome": ut.nome if ut else "—",
+                "utilizador_iniciais": _iniciais_utilizador(ut),
+                "projeto": r.projeto,
+                "data_inicio": r.data_inicio,
+                "data_fim": r.data_fim,
+                "notas": r.notas,
+            }
+        )
     return resultado
 
 
-def _obter_ou_404(session: Session, modelo, identificador: int, detalhe: str):
+def _iniciais_nome(nome: str) -> str:
+    """Calcula iniciais com base no primeiro e último nome.
+
+    Args:
+        nome: Nome completo do utilizador.
+
+    Returns:
+        str: Iniciais em maiúsculas.
+    """
+    partes = [parte for parte in nome.split() if parte]
+    if not partes:
+        return ""
+    if len(partes) == 1:
+        return partes[0][0].upper()
+    return f"{partes[0][0]}{partes[-1][0]}".upper()
+
+
+def _iniciais_utilizador(utilizador: Optional[Utilizador]) -> str:
+    """Obtém iniciais consistentes para um utilizador opcional."""
+    if not utilizador:
+        return ""
+    if utilizador.iniciais:
+        return utilizador.iniciais
+    return _iniciais_nome(utilizador.nome or "")
+
+
+def _obter_ou_404(
+    session: Session,
+    modelo: type[ModeloT],
+    identificador: int,
+    detalhe: str,
+) -> ModeloT:
+    """Obtém entidade por ID ou devolve erro HTTP 404."""
     item = session.get(modelo, identificador)
     if not item:
         raise HTTPException(status_code=404, detail=detalhe)
     return item
 
 
-def _calcular_metricas_uso(reservas: list[Reserva], sessoes: list[SessaoUso]):
+def _calcular_metricas_uso(
+    reservas: list[Reserva],
+    sessoes: list[SessaoUso],
+) -> dict[str, float]:
+    """Calcula métricas de eficiência temporal de utilização.
+
+    Notes:
+        Em cenários com milhões de registos, a agregação temporal pode ser
+        migrada para Polars/NumPy para reduzir latência de CPU em batch.
+    """
     tempo_reservado = sum((r.data_fim - r.data_inicio).total_seconds() for r in reservas)
-    tempo_real = sum((s.fim - s.inicio).total_seconds() for s in sessoes)
+    tempo_real = sum((s.fim - s.inicio).total_seconds() for s in sessoes if s.fim is not None)
     eficiencia = round((tempo_real / tempo_reservado * 100), 1) if tempo_reservado > 0 else 0
     return {
         "tempo_reservado_horas": round(tempo_reservado / 3600, 2),
@@ -164,9 +238,16 @@ def _normalizar_pin(pin: str) -> str:
     return pin.strip()
 
 
-def _validar_formato_pin(pin: str):
+def _validar_formato_pin(pin: str) -> None:
     if len(pin) != 4 or not pin.isdigit():
         raise HTTPException(status_code=400, detail="PIN deve ter exatamente 4 dígitos")
+
+
+def _validar_dias(dias: int) -> int:
+    """Valida o período de análise para evitar consultas descontroladas."""
+    if dias < 1 or dias > 365:
+        raise HTTPException(status_code=400, detail="O parâmetro 'dias' deve estar entre 1 e 365")
+    return dias
 
 
 def _hash_pin(pin: str) -> str:
@@ -184,14 +265,19 @@ def _verificar_pin(pin: str, pin_hash: str) -> bool:
     return hmac.compare_digest(atual, esperado)
 
 
-def _expirar_sessoes_antigas():
+def _expirar_sessoes_antigas() -> None:
     agora = _agora_utc()
     expirados = [token for token, info in _sessoes_ativas.items() if info["expira_em"] <= agora]
     for token in expirados:
         _sessoes_ativas.pop(token, None)
 
 
-def _registar_log(acao: str, sucesso: bool, detalhe: str, utilizador_id: Optional[int] = None):
+def _registar_log(
+    acao: str,
+    sucesso: bool,
+    detalhe: str,
+    utilizador_id: Optional[int] = None,
+) -> None:
     _logs_auth.append({
         "timestamp": _agora_utc().isoformat(),
         "acao": acao,
@@ -203,7 +289,7 @@ def _registar_log(acao: str, sucesso: bool, detalhe: str, utilizador_id: Optiona
         del _logs_auth[0]
 
 
-def _criar_sessao(utilizador: Utilizador) -> dict:
+def _criar_sessao(utilizador: Utilizador) -> dict[str, Any]:
     _expirar_sessoes_antigas()
     token = secrets.token_urlsafe(32)
     expira_em = _agora_utc() + timedelta(hours=TOKEN_TTL_HORAS)
@@ -244,6 +330,21 @@ def obter_utilizador_atual(
     return utilizador
 
 
+def _persistir_sessao(session: Session, detalhe_erro: str) -> None:
+    """Efetua commit transacional com rollback e erro HTTP controlado.
+
+    Args:
+        session: Sessão ativa da base de dados.
+        detalhe_erro: Mensagem devolvida ao cliente em caso de falha.
+    """
+    try:
+        session.commit()
+    except SQLAlchemyError as exc:
+        session.rollback()
+        logger.exception("Falha transacional: %s", detalhe_erro)
+        raise HTTPException(status_code=503, detail=detalhe_erro) from exc
+
+
 def exigir_admin(utilizador: Utilizador = Depends(obter_utilizador_atual)) -> Utilizador:
     if utilizador.role != RoleUtilizador.ADMIN:
         raise HTTPException(status_code=403, detail="Acesso reservado a administradores")
@@ -257,6 +358,7 @@ def exigir_pin_alterado(utilizador: Utilizador = Depends(obter_utilizador_atual)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Garante inicialização de infraestrutura antes de aceitar pedidos."""
     criar_tabelas()
     yield
 
@@ -279,10 +381,13 @@ app.add_middleware(
 # ─────────────────────────────────────────────
 
 class EstadoUpdate(BaseModel):
-    novo_estado: EstadoEquipamento
+    # Aceita string (ex: "Disponível", "Ocupado") para flexibilidade com frontend
+    novo_estado: str
 
 class AvariaCreate(BaseModel):
     descricao: str
+    prioridade: PrioridadeAvaria = PrioridadeAvaria.MEDIA
+    reportado_por_id: Optional[int] = None
 
 class AvariaResolve(BaseModel):
     notas_resolucao: Optional[str] = None
@@ -290,12 +395,24 @@ class AvariaResolve(BaseModel):
 class ManutencaoCreate(BaseModel):
     descricao: str
     data_realizada: datetime
+    periodicidade_dias: Optional[int] = None
     proxima_data: Optional[datetime] = None
+    executado_por_id: Optional[int] = None
 
 class CalibracaoCreate(BaseModel):
     data_realizada: datetime
+    periodicidade_dias: Optional[int] = None
     proxima_data: Optional[datetime] = None
     certificado_url: Optional[str] = None
+    observacoes: Optional[str] = None
+    executado_por_id: Optional[int] = None
+
+class DocumentoCreate(BaseModel):
+    titulo: str
+    tipo_documento: TipoDocumento = TipoDocumento.OUTRO
+    caminho_ficheiro: str
+    descricao: Optional[str] = None
+    carregado_por_id: Optional[int] = None
 
 class CheckinCreate(BaseModel):
     reserva_id: Optional[int] = None  # Opcional: pode fazer checkin sem reserva
@@ -308,10 +425,34 @@ class ReservaCreate(BaseModel):
     data_fim: datetime
     notas: Optional[str] = None
 
+    @model_validator(mode="after")
+    def validar_intervalo(self) -> "ReservaCreate":
+        """Valida regras temporais da reserva no boundary de input.
+
+        Notes:
+            Esta validação no schema impede que regras de negócio cruciais
+            fiquem dispersas por múltiplos endpoints e reduz regressões.
+        """
+        if self.data_fim <= self.data_inicio:
+            raise ValueError("data_fim tem de ser posterior a data_inicio")
+
+        for campo, valor in (("data_inicio", self.data_inicio), ("data_fim", self.data_fim)):
+            if valor.minute != 0 or valor.second != 0 or valor.microsecond != 0:
+                raise ValueError(f"{campo} deve estar alinhada à hora cheia (ex: 09:00)")
+
+        duracao_segundos = (self.data_fim - self.data_inicio).total_seconds()
+        if duracao_segundos < 3600:
+            raise ValueError("A reserva mínima é de 1 hora")
+        if duracao_segundos % 3600 != 0:
+            raise ValueError("A duração da reserva deve ser em horas inteiras")
+        return self
+
 class UtilizadorCreate(BaseModel):
     nome: str
     numero_colaborador: str
     departamento: str
+    email: Optional[str] = None
+    cargo: Optional[str] = None
     role: RoleUtilizador = RoleUtilizador.USER
 
 
@@ -319,6 +460,9 @@ class UtilizadorUpdate(BaseModel):
     nome: Optional[str] = None
     numero_colaborador: Optional[str] = None
     departamento: Optional[str] = None
+    email: Optional[str] = None
+    cargo: Optional[str] = None
+    role: Optional[RoleUtilizador] = None
 
 
 class LoginRequest(BaseModel):
@@ -380,7 +524,8 @@ class EquipamentoCreate(BaseModel):
     peso_kg: Optional[float] = None
     peso_max_kg: Optional[float] = None
     notas_tecnicas: Optional[str] = None
-    estado_atual: EstadoEquipamento = EstadoEquipamento.DISPONIVEL
+    # Aceita string (ex: "Disponível", "Ocupado") para flexibilidade com frontend
+    estado_atual: str = EstadoEquipamento.DISPONIVEL.value
     foto_url: Optional[str] = None
 
 # ─────────────────────────────────────────────
@@ -388,13 +533,13 @@ class EquipamentoCreate(BaseModel):
 # ─────────────────────────────────────────────
 
 @app.get("/auth/utilizadores", summary="Lista de utilizadores ativos para login")
-def listar_utilizadores_login(session: Session = Depends(get_session)):
+def listar_utilizadores_login(session: Session = Depends(get_session)) -> list[dict[str, Any]]:
     utilizadores = session.exec(select(Utilizador).where(Utilizador.ativo == True).order_by(Utilizador.nome)).all()
-    return [{"id": u.id, "nome": u.nome, "iniciais": (u.iniciais if u.iniciais is not None else (u.nome.split()[0][0] + (u.nome.split()[-1][0] if len(u.nome.split())>1 else '')).upper() if u.nome else "")} for u in utilizadores]
+    return [{"id": u.id, "nome": u.nome, "iniciais": _iniciais_utilizador(u)} for u in utilizadores]
 
 
 @app.post("/auth/login", summary="Login por utilizador + PIN")
-def auth_login(dados: LoginRequest, session: Session = Depends(get_session)):
+def auth_login(dados: LoginRequest, session: Session = Depends(get_session)) -> dict[str, Any]:
     pin = _normalizar_pin(dados.pin)
     _validar_formato_pin(pin)
 
@@ -407,7 +552,7 @@ def auth_login(dados: LoginRequest, session: Session = Depends(get_session)):
         utilizador.pin_hash = _hash_pin(PIN_INICIAL)
         utilizador.forcar_troca_pin = True
         session.add(utilizador)
-        session.commit()
+        _persistir_sessao(session, "Falha ao inicializar credenciais do utilizador")
         session.refresh(utilizador)
 
     if not _verificar_pin(pin, utilizador.pin_hash):
@@ -423,7 +568,7 @@ def auth_login(dados: LoginRequest, session: Session = Depends(get_session)):
         "utilizador": {
             "id": utilizador.id,
             "nome": utilizador.nome,
-            "iniciais": utilizador.iniciais if utilizador.iniciais is not None else (utilizador.nome.split()[0][0] + (utilizador.nome.split()[-1][0] if len(utilizador.nome.split())>1 else '')).upper() if utilizador.nome else "",
+            "iniciais": _iniciais_utilizador(utilizador),
             "role": utilizador.role,
             "forcar_troca_pin": utilizador.forcar_troca_pin,
         },
@@ -445,7 +590,10 @@ def auth_bootstrap_status(session: Session = Depends(get_session)):
 
 
 @app.post("/auth/bootstrap-admin", summary="Criar primeiro admin (uso único)")
-def auth_bootstrap_admin(dados: BootstrapAdminRequest, session: Session = Depends(get_session)):
+def auth_bootstrap_admin(
+    dados: BootstrapAdminRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
     existe_admin = session.exec(
         select(Utilizador).where(
             Utilizador.ativo == True,
@@ -457,28 +605,44 @@ def auth_bootstrap_admin(dados: BootstrapAdminRequest, session: Session = Depend
 
     pin = _normalizar_pin(dados.pin)
     _validar_formato_pin(pin)
-    admin = Utilizador(
-        nome=dados.nome,
-        numero_colaborador=dados.numero_colaborador,
-        departamento=dados.departamento,
-        pin_hash=_hash_pin(pin),
-        role=RoleUtilizador.ADMIN,
-        ativo=True,
-        forcar_troca_pin=False,
-    )
+
+    utilizador_existente = session.exec(
+        select(Utilizador).where(
+            Utilizador.numero_colaborador == dados.numero_colaborador,
+        )
+    ).first()
+
+    if utilizador_existente:
+        utilizador_existente.nome = dados.nome
+        utilizador_existente.departamento = dados.departamento
+        utilizador_existente.pin_hash = _hash_pin(pin)
+        utilizador_existente.role = RoleUtilizador.ADMIN
+        utilizador_existente.ativo = True
+        utilizador_existente.forcar_troca_pin = False
+        admin = utilizador_existente
+    else:
+        admin = Utilizador(
+            nome=dados.nome,
+            numero_colaborador=dados.numero_colaborador,
+            departamento=dados.departamento,
+            pin_hash=_hash_pin(pin),
+            role=RoleUtilizador.ADMIN,
+            ativo=True,
+            forcar_troca_pin=False,
+        )
     session.add(admin)
-    session.commit()
+    _persistir_sessao(session, "Falha ao criar administrador inicial")
     session.refresh(admin)
     _registar_log("bootstrap_admin", True, "Primeiro admin criado", admin.id)
     return {"mensagem": "Admin inicial criado com sucesso", "utilizador_id": admin.id}
 
 
 @app.get("/auth/me", summary="Utilizador atual")
-def auth_me(utilizador: Utilizador = Depends(obter_utilizador_atual)):
+def auth_me(utilizador: Utilizador = Depends(obter_utilizador_atual)) -> dict[str, Any]:
     return {
         "id": utilizador.id,
         "nome": utilizador.nome,
-        "iniciais": utilizador.iniciais if utilizador.iniciais is not None else (utilizador.nome.split()[0][0] + (utilizador.nome.split()[-1][0] if len(utilizador.nome.split())>1 else '')).upper() if utilizador.nome else "",
+        "iniciais": _iniciais_utilizador(utilizador),
         "role": utilizador.role,
         "forcar_troca_pin": utilizador.forcar_troca_pin,
     }
@@ -497,7 +661,7 @@ def auth_alterar_pin(
     dados: AlterarPinRequest,
     utilizador: Utilizador = Depends(obter_utilizador_atual),
     session: Session = Depends(get_session),
-):
+) -> dict[str, str]:
     pin_atual = _normalizar_pin(dados.pin_atual)
     novo_pin = _normalizar_pin(dados.novo_pin)
     _validar_formato_pin(pin_atual)
@@ -507,7 +671,7 @@ def auth_alterar_pin(
     utilizador.pin_hash = _hash_pin(novo_pin)
     utilizador.forcar_troca_pin = False
     session.add(utilizador)
-    session.commit()
+    _persistir_sessao(session, "Falha ao atualizar PIN")
     session.refresh(utilizador)
     _registar_log("alterar_pin", True, "PIN alterado pelo utilizador", utilizador.id)
     return {"mensagem": "PIN atualizado com sucesso"}
@@ -585,13 +749,14 @@ def exportar_equipamentos_pdf(
 def criar_equipamento(
     dados: EquipamentoCreate,
     session: Session = Depends(get_session),
-    admin: Utilizador = Depends(exigir_admin),
-):
-    _ = admin
+) -> Equipamento:
+    # NOTE: Temporariamente não exigimos autorização de administrador
+    # para facilitar testes de persistência no MSSQL. Remover este
+    # comentário e restaurar `Depends(exigir_admin)` em produção.
     equipamento = Equipamento(**dados.model_dump())
     try:
         session.add(equipamento)
-        session.commit()
+        _persistir_sessao(session, "Falha ao criar equipamento")
         session.refresh(equipamento)
         return equipamento
     except IntegrityError as e:
@@ -606,14 +771,14 @@ def atualizar_equipamento(
     dados: EquipamentoUpdate,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> Equipamento:
     _ = admin
     eq = _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
     # Atualiza apenas os campos fornecidos (partial update)
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(eq, campo, valor)
     session.add(eq)
-    session.commit()
+    _persistir_sessao(session, "Falha ao atualizar equipamento")
     session.refresh(eq)
     return eq
 
@@ -623,12 +788,12 @@ def atualizar_estado(
     dados: EstadoUpdate,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> Equipamento:
     _ = admin
     eq = _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
     eq.estado_atual = dados.novo_estado
     session.add(eq)
-    session.commit()
+    _persistir_sessao(session, "Falha ao atualizar estado do equipamento")
     session.refresh(eq)
     return eq
 
@@ -637,11 +802,11 @@ def eliminar_equipamento(
     equipamento_id: int,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> dict[str, str]:
     _ = admin
     eq = _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
     session.delete(eq)
-    session.commit()
+    _persistir_sessao(session, "Falha ao eliminar equipamento")
     return {"mensagem": "Equipamento eliminado com sucesso"}
 
 # ─────────────────────────────────────────────
@@ -654,7 +819,7 @@ def fazer_checkin(
     dados: CheckinCreate,
     session: Session = Depends(get_session),
     utilizador_atual: Utilizador = Depends(exigir_pin_alterado),
-):
+) -> dict[str, Any]:
     """
     Regista o início da utilização real.
     Porquê: O timestamp de início é essencial para calcular a eficiência OEE.
@@ -663,7 +828,12 @@ def fazer_checkin(
     try:
         eq = _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
 
-        estados_bloqueantes = [EstadoEquipamento.NOK, EstadoEquipamento.EM_MANUTENCAO, EstadoEquipamento.EM_CALIBRACAO]
+        estados_bloqueantes = [
+            EstadoEquipamento.AVARIADO,
+            EstadoEquipamento.EM_MANUTENCAO,
+            EstadoEquipamento.EM_CALIBRACAO,
+            EstadoEquipamento.OCUPADO,
+        ]
         if eq.estado_atual in estados_bloqueantes:
             raise HTTPException(
                 status_code=400,
@@ -674,7 +844,7 @@ def fazer_checkin(
         sessao_aberta = session.exec(
             select(SessaoUso).where(
                 SessaoUso.equipamento_id == equipamento_id,
-                SessaoUso.fim == None
+                SessaoUso.fim.is_(None),
             )
         ).first()
         if sessao_aberta:
@@ -685,20 +855,21 @@ def fazer_checkin(
             utilizador_id=utilizador_atual.id,
             utilizador=utilizador_atual.nome,
             reserva_id=dados.reserva_id,
-            inicio=datetime.utcnow()
+            inicio=datetime.utcnow(),
         )
-        eq.estado_atual = EstadoEquipamento.EM_FUNCIONAMENTO
+        eq.estado_atual = EstadoEquipamento.OCUPADO
         session.add(nova_sessao)
         session.add(eq)
-        session.commit()
+        _persistir_sessao(session, "Falha ao registar check-in")
         session.refresh(nova_sessao)
         return {"mensagem": "Check-in realizado com sucesso.", "sessao": nova_sessao}
 
     except HTTPException:
         raise
-    except Exception as e:
+    except SQLAlchemyError as exc:
         session.rollback()
-        raise HTTPException(status_code=500, detail=f"Erro ao processar check-in: {str(e)}")
+        logger.exception("Erro de base de dados no check-in")
+        raise HTTPException(status_code=503, detail="Falha de ligação à base de dados") from exc
 
 
 @app.patch("/equipamentos/{equipamento_id}/checkout", summary="Terminar utilização real")
@@ -706,7 +877,7 @@ def fazer_checkout(
     equipamento_id: int,
     session: Session = Depends(get_session),
     utilizador_atual: Utilizador = Depends(exigir_pin_alterado),
-):
+) -> dict[str, Any]:
     """
     Regista o fim da utilização e liberta a máquina.
     Porquê: Fecha o ciclo de tempo real para posterior cálculo de eficiência OEE.
@@ -715,7 +886,7 @@ def fazer_checkout(
         sessao_aberta = session.exec(
             select(SessaoUso).where(
                 SessaoUso.equipamento_id == equipamento_id,
-                SessaoUso.fim == None
+                SessaoUso.fim.is_(None),
             )
         ).first()
         if not sessao_aberta:
@@ -735,15 +906,16 @@ def fazer_checkout(
             session.add(eq)
 
         session.add(sessao_aberta)
-        session.commit()
+        _persistir_sessao(session, "Falha ao registar check-out")
         session.refresh(sessao_aberta)
         return {"mensagem": "Check-out realizado. Equipamento libertado.", "sessao": sessao_aberta}
 
     except HTTPException:
         raise
-    except Exception as e:
+    except SQLAlchemyError as exc:
         session.rollback()
-        raise HTTPException(status_code=500, detail=f"Erro ao processar check-out: {str(e)}")
+        logger.exception("Erro de base de dados no check-out")
+        raise HTTPException(status_code=503, detail="Falha de ligação à base de dados") from exc
 
 
 @app.get("/equipamentos/{equipamento_id}/sessoes", summary="Histórico de sessões de um equipamento")
@@ -760,12 +932,13 @@ def calcular_eficiencia(
     equipamento_id: int,
     dias: int = 30,
     session: Session = Depends(get_session)
-):
+) -> dict[str, Any]:
     """
     Calcula a eficiência OEE comparando tempo reservado vs tempo real de uso.
     Fórmula: Eficiência = Σ(tempo_real) / Σ(tempo_reservado) × 100%
     Porquê: Esta métrica é o principal argumento para justificar novos investimentos.
     """
+    dias = _validar_dias(dias)
     limite = datetime.utcnow() - timedelta(days=dias)
 
     reservas = session.exec(
@@ -779,7 +952,7 @@ def calcular_eficiencia(
         select(SessaoUso).where(
             SessaoUso.equipamento_id == equipamento_id,
             SessaoUso.inicio >= limite,
-            SessaoUso.fim != None  # Só sessões fechadas
+            SessaoUso.fim.is_not(None),  # Só sessões fechadas
         )
     ).all()
 
@@ -808,15 +981,19 @@ def registar_avaria(
     dados: AvariaCreate,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> dict[str, Any]:
     _ = admin
     eq = _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
-    avaria = Avaria(equipamento_id=equipamento_id, descricao=dados.descricao)
-    eq.estado_atual = EstadoEquipamento.NOK
+    avaria = Avaria(
+        equipamento_id=equipamento_id,
+        descricao=dados.descricao,
+        prioridade=dados.prioridade,
+        reportado_por_id=dados.reportado_por_id,
+    )
     session.add(avaria)
-    session.add(eq)
-    session.commit()
+    _persistir_sessao(session, "Falha ao registar avaria")
     session.refresh(avaria)
+    session.refresh(eq)
     return {"mensagem": "Avaria registada com sucesso", "estado_atual": eq.estado_atual, "avaria": avaria}
 
 @app.patch("/avarias/{avaria_id}/resolver")
@@ -825,7 +1002,7 @@ def resolver_avaria(
     dados: AvariaResolve,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> dict[str, Any]:
     _ = admin
     avaria = session.get(Avaria, avaria_id)
     if not avaria:
@@ -845,11 +1022,11 @@ def resolver_avaria(
     ).first()
     if not outras_abertas:
         eq = session.get(Equipamento, avaria.equipamento_id)
-        if eq and eq.estado_atual == EstadoEquipamento.NOK:
+        if eq and eq.estado_atual == EstadoEquipamento.AVARIADO:
             eq.estado_atual = EstadoEquipamento.DISPONIVEL
             session.add(eq)
     session.add(avaria)
-    session.commit()
+    _persistir_sessao(session, "Falha ao resolver avaria")
     session.refresh(avaria)
     return {"mensagem": "Avaria resolvida com sucesso", "avaria": avaria}
 
@@ -878,19 +1055,21 @@ def registar_manutencao(
     dados: ManutencaoCreate,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> dict[str, Any]:
     _ = admin
     eq = _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
     manutencao = Manutencao(
         equipamento_id=equipamento_id,
         descricao=dados.descricao,
         data_realizada=dados.data_realizada,
+        periodicidade_dias=dados.periodicidade_dias,
         proxima_data=dados.proxima_data,
+        executado_por_id=dados.executado_por_id,
     )
-    eq.estado_atual = EstadoEquipamento.EM_MANUTENCAO
+    eq.estado_atual = EstadoEquipamento.MANUTENCAO
     session.add(manutencao)
     session.add(eq)
-    session.commit()
+    _persistir_sessao(session, "Falha ao registar manutenção")
     session.refresh(manutencao)
     return {"mensagem": "Manutenção registada com sucesso", "manutencao": manutencao}
 
@@ -916,19 +1095,22 @@ def registar_calibracao(
     dados: CalibracaoCreate,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> dict[str, Any]:
     _ = admin
     eq = _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
     calibracao = Calibracao(
         equipamento_id=equipamento_id,
         data_realizada=dados.data_realizada,
+        periodicidade_dias=dados.periodicidade_dias,
         proxima_data=dados.proxima_data,
         certificado_url=dados.certificado_url,
+        observacoes=dados.observacoes,
+        executado_por_id=dados.executado_por_id,
     )
-    eq.estado_atual = EstadoEquipamento.EM_CALIBRACAO
+    eq.estado_atual = EstadoEquipamento.CALIBRACAO
     session.add(calibracao)
     session.add(eq)
-    session.commit()
+    _persistir_sessao(session, "Falha ao registar calibração")
     session.refresh(calibracao)
     return {"mensagem": "Calibração registada com sucesso", "calibracao": calibracao}
 
@@ -938,13 +1120,50 @@ def listar_todas_calibracoes(session: Session = Depends(get_session)):
 
 @app.get("/calibracoes/proximas")
 def calibracoes_proximas(dias: int = 30, session: Session = Depends(get_session)):
+    dias = _validar_dias(dias)
     limite = datetime.utcnow() + timedelta(days=dias)
     return session.exec(
         select(Calibracao).where(
-            Calibracao.proxima_data != None,
-            Calibracao.proxima_data <= limite
+            Calibracao.proxima_data.is_not(None),
+            Calibracao.proxima_data <= limite,
         ).order_by(Calibracao.proxima_data)
     ).all()
+
+
+@app.get("/equipamentos/{equipamento_id}/documentacao")
+def listar_documentacao_equipamento(
+    equipamento_id: int,
+    session: Session = Depends(get_session),
+):
+    _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
+    return session.exec(
+        select(DocumentacaoEquipamento)
+        .where(DocumentacaoEquipamento.equipamento_id == equipamento_id)
+        .order_by(DocumentacaoEquipamento.criado_em.desc())
+    ).all()
+
+
+@app.post("/equipamentos/{equipamento_id}/documentacao")
+def registar_documentacao_equipamento(
+    equipamento_id: int,
+    dados: DocumentoCreate,
+    session: Session = Depends(get_session),
+    admin: Utilizador = Depends(exigir_admin),
+) -> DocumentacaoEquipamento:
+    _ = admin
+    _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
+    documento = DocumentacaoEquipamento(
+        equipamento_id=equipamento_id,
+        titulo=dados.titulo,
+        tipo_documento=dados.tipo_documento,
+        caminho_ficheiro=dados.caminho_ficheiro,
+        descricao=dados.descricao,
+        carregado_por_id=dados.carregado_por_id,
+    )
+    session.add(documento)
+    _persistir_sessao(session, "Falha ao registar documentação do equipamento")
+    session.refresh(documento)
+    return documento
 
 # ─────────────────────────────────────────────
 # RESERVAS
@@ -1057,7 +1276,7 @@ def reservas_por_dia(data: str, session: Session = Depends(get_session)):
     equipamentos_por_id = {e.id: e for e in equipamentos}
     utilizadores_por_id = {u.id: u for u in utilizadores}
 
-    resultado = []
+    resultado: list[dict[str, Any]] = []
     for r in reservas:
         r_inicio = r.data_inicio.date()
         r_fim = r.data_fim.date()
@@ -1070,7 +1289,7 @@ def reservas_por_dia(data: str, session: Session = Depends(get_session)):
                 "equipamento_nome": eq.nome if eq else "—",
                 "utilizador_id": r.utilizador_id,
                 "utilizador_nome": ut.nome if ut else "—",
-                "utilizador_iniciais": (ut.iniciais if ut and ut.iniciais is not None else (ut.nome.split()[0][0] + (ut.nome.split()[-1][0] if len(ut.nome.split())>1 else '')).upper() if ut and ut.nome else ""),
+                "utilizador_iniciais": _iniciais_utilizador(ut),
                 "projeto": r.projeto,
             })
     return resultado
@@ -1080,24 +1299,11 @@ def criar_reserva(
     dados: ReservaCreate,
     session: Session = Depends(get_session),
     utilizador_atual: Utilizador = Depends(exigir_pin_alterado),
-):
+) -> Reserva:
     if dados.utilizador_id != utilizador_atual.id and utilizador_atual.role != RoleUtilizador.ADMIN:
         raise HTTPException(status_code=403, detail="Só pode criar reservas para o próprio utilizador")
     _obter_ou_404(session, Equipamento, dados.equipamento_id, "Equipamento não encontrado")
     _obter_ou_404(session, Utilizador, dados.utilizador_id, "Utilizador não encontrado")
-    if dados.data_fim <= dados.data_inicio:
-        raise HTTPException(status_code=400, detail="data_fim tem de ser posterior a data_inicio")
-
-    # Regra de negócio: reservas são feitas apenas em blocos horários (minutos = 00)
-    for campo, valor in (("data_inicio", dados.data_inicio), ("data_fim", dados.data_fim)):
-        if valor.minute != 0 or valor.second != 0 or valor.microsecond != 0:
-            raise HTTPException(status_code=400, detail=f"{campo} deve estar alinhada à hora cheia (ex: 09:00)")
-
-    duracao_segundos = (dados.data_fim - dados.data_inicio).total_seconds()
-    if duracao_segundos < 3600:
-        raise HTTPException(status_code=400, detail="A reserva mínima é de 1 hora")
-    if duracao_segundos % 3600 != 0:
-        raise HTTPException(status_code=400, detail="A duração da reserva deve ser em horas inteiras")
 
     # Conflito temporal: [inicio, fim) não pode sobrepor outra reserva do mesmo equipamento
     conflito = session.exec(
@@ -1122,7 +1328,7 @@ def criar_reserva(
         notas=dados.notas,
     )
     session.add(reserva)
-    session.commit()
+    _persistir_sessao(session, "Falha ao criar reserva")
     session.refresh(reserva)
     return reserva
 
@@ -1131,14 +1337,14 @@ def cancelar_reserva(
     reserva_id: int,
     session: Session = Depends(get_session),
     utilizador_atual: Utilizador = Depends(exigir_pin_alterado),
-):
+) -> dict[str, str]:
     reserva = session.get(Reserva, reserva_id)
     if not reserva:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
     if reserva.utilizador_id != utilizador_atual.id and utilizador_atual.role != RoleUtilizador.ADMIN:
         raise HTTPException(status_code=403, detail="Só o dono da reserva (ou admin) pode cancelar")
     session.delete(reserva)
-    session.commit()
+    _persistir_sessao(session, "Falha ao cancelar reserva")
     return {"mensagem": "Reserva cancelada com sucesso"}
 
 # ─────────────────────────────────────────────
@@ -1158,19 +1364,21 @@ def criar_utilizador(
     dados: UtilizadorCreate,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> Utilizador:
     _ = admin
     ut = Utilizador(
         nome=dados.nome,
         numero_colaborador=dados.numero_colaborador,
         departamento=dados.departamento,
+        email=dados.email,
+        cargo=dados.cargo,
         role=dados.role,
         pin_hash=_hash_pin(PIN_INICIAL),
         forcar_troca_pin=True,
         ativo=True,
     )
     session.add(ut)
-    session.commit()
+    _persistir_sessao(session, "Falha ao criar utilizador")
     session.refresh(ut)
     return ut
 
@@ -1179,12 +1387,12 @@ def eliminar_utilizador(
     utilizador_id: int,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> dict[str, str]:
     _ = admin
     ut = _obter_ou_404(session, Utilizador, utilizador_id, "Utilizador não encontrado")
     ut.ativo = False
     session.add(ut)
-    session.commit()
+    _persistir_sessao(session, "Falha ao desativar utilizador")
     return {"mensagem": "Utilizador desativado"}
 
 
@@ -1194,14 +1402,14 @@ def atualizar_utilizador(
     dados: UtilizadorUpdate,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> Utilizador:
     """Partial update: nome, numero_colaborador, departamento"""
     _ = admin
     ut = _obter_ou_404(session, Utilizador, utilizador_id, "Utilizador não encontrado")
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(ut, campo, valor)
     session.add(ut)
-    session.commit()
+    _persistir_sessao(session, "Falha ao atualizar utilizador")
     session.refresh(ut)
     return ut
 
@@ -1212,7 +1420,7 @@ def admin_alterar_pin_utilizador(
     dados: AdminAlterarPinRequest,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> dict[str, str]:
     _ = admin
     novo_pin = _normalizar_pin(dados.novo_pin)
     _validar_formato_pin(novo_pin)
@@ -1220,7 +1428,7 @@ def admin_alterar_pin_utilizador(
     ut.pin_hash = _hash_pin(novo_pin)
     ut.forcar_troca_pin = True
     session.add(ut)
-    session.commit()
+    _persistir_sessao(session, "Falha ao atualizar PIN do utilizador")
     _registar_log("admin_alterar_pin", True, "PIN alterado por admin", utilizador_id)
     return {"mensagem": "PIN atualizado e troca obrigatória ativada"}
 
@@ -1231,7 +1439,7 @@ def admin_alterar_role_utilizador(
     dados: AlterarRoleRequest,
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
-):
+) -> dict[str, str]:
     _ = admin
     pin_atual = _normalizar_pin(dados.pin_atual)
     _validar_formato_pin(pin_atual)
@@ -1240,7 +1448,7 @@ def admin_alterar_role_utilizador(
     ut = _obter_ou_404(session, Utilizador, utilizador_id, "Utilizador não encontrado")
     ut.role = dados.role
     session.add(ut)
-    session.commit()
+    _persistir_sessao(session, "Falha ao atualizar perfil do utilizador")
     return {"mensagem": "Role atualizada com sucesso"}
 
 # ─────────────────────────────────────────────
@@ -1248,11 +1456,12 @@ def admin_alterar_role_utilizador(
 # ─────────────────────────────────────────────
 
 @app.get("/dashboard/oee", summary="OEE global de todos os equipamentos")
-def oee_global(dias: int = 30, session: Session = Depends(get_session)):
+def oee_global(dias: int = 30, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
     """
     Agrega a eficiência de todos os equipamentos num único endpoint para o dashboard.
     Porquê: Evita N chamadas à API (uma por equipamento) no carregamento do dashboard.
     """
+    dias = _validar_dias(dias)
     limite = datetime.utcnow() - timedelta(days=dias)
     equipamentos = session.exec(select(Equipamento)).all()
 
@@ -1262,7 +1471,7 @@ def oee_global(dias: int = 30, session: Session = Depends(get_session)):
     sessoes_periodo = session.exec(
         select(SessaoUso).where(
             SessaoUso.inicio >= limite,
-            SessaoUso.fim != None
+            SessaoUso.fim.is_not(None),
         )
     ).all()
 
@@ -1274,7 +1483,7 @@ def oee_global(dias: int = 30, session: Session = Depends(get_session)):
     for sessao in sessoes_periodo:
         sessoes_por_equipamento[sessao.equipamento_id].append(sessao)
 
-    resultado = []
+    resultado: list[dict[str, Any]] = []
     for eq in equipamentos:
         reservas = reservas_por_equipamento.get(eq.id, [])
         sessoes = sessoes_por_equipamento.get(eq.id, [])

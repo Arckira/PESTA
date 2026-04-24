@@ -1,21 +1,22 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+
 import { api } from '../api/index.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 import QRCodeDisplay from '../components/QRCode/QRCodeDisplay.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import styles from './DetalheEquipamento.module.css'
 
-const ESTADOS = ['Em funcionamento','NOK','Ocupado','Em calibração','Em manutenção']
+const ESTADOS = ['Disponível', 'Ocupado', 'Avariado', 'Em calibração', 'Em manutenção']
 
 function fmt(dt) {
   if (!dt) return '—'
-  return new Date(dt).toLocaleDateString('pt-PT', { 
-    day: '2-digit', 
-    month: 'short', 
-    year: 'numeric', 
-    hour: '2-digit', 
-    minute: '2-digit' 
+  return new Date(dt).toLocaleDateString('pt-PT', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   })
 }
 
@@ -32,12 +33,10 @@ export default function DetalheEquipamento() {
   const [calibracoes, setCalibracoes] = useState([])
   const [tab, setTab] = useState('avarias')
 
-  // Estado modal
   const [modalEstado, setModalEstado] = useState(false)
   const [novoEstado, setNovoEstado] = useState('')
   const [savingEstado, setSavingEstado] = useState(false)
 
-  // Avaria modal
   const [modalAvaria, setModalAvaria] = useState(false)
   const [descAvaria, setDescAvaria] = useState('')
   const [savingAvaria, setSavingAvaria] = useState(false)
@@ -64,7 +63,9 @@ export default function DetalheEquipamento() {
     }
   }
 
-  useEffect(() => { carregar() }, [id])
+  useEffect(() => {
+    carregar()
+  }, [id])
 
   const handleEstado = async () => {
     setSavingEstado(true)
@@ -72,8 +73,11 @@ export default function DetalheEquipamento() {
       await api.atualizarEstado(id, novoEstado)
       setModalEstado(false)
       carregar()
-    } catch (e) { alert(e.message) }
-    finally { setSavingEstado(false) }
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setSavingEstado(false)
+    }
   }
 
   const handleAvaria = async () => {
@@ -83,32 +87,43 @@ export default function DetalheEquipamento() {
       const res = await api.registarAvaria(id, descAvaria)
       setMsgAvaria(res.mensagem || 'Avaria registada!')
       setDescAvaria('')
-      setTimeout(() => { setModalAvaria(false); setMsgAvaria(''); carregar() }, 1400)
-    } catch (e) { alert(e.message) }
-    finally { setSavingAvaria(false) }
+      setTimeout(() => {
+        setModalAvaria(false)
+        setMsgAvaria('')
+        carregar()
+      }, 1400)
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setSavingAvaria(false)
+    }
   }
-  
+
   const handleCheckin = async () => {
     try {
-      await api.iniciarCheckin(id);
+      await api.iniciarCheckin(id)
       toast.success('Check-in iniciado com sucesso.')
-      carregar();
-    } catch (e) { alert("Erro no Check-in: " + e.message); }
-  };
+      carregar()
+    } catch (e) {
+      alert(`Erro no Check-in: ${e.message}`)
+    }
+  }
 
   const handleCheckout = async () => {
-    if (!confirm("Tem a certeza que deseja terminar o trabalho e libertar a máquina?")) return;
+    if (!confirm('Tem a certeza que deseja terminar o trabalho e libertar a máquina?')) return
     try {
-      await api.terminarCheckout(id);
-      carregar();
-    } catch (e) { alert("Erro no Check-out: " + e.message); }
-  };
+      await api.terminarCheckout(id)
+      carregar()
+    } catch (e) {
+      alert(`Erro no Check-out: ${e.message}`)
+    }
+  }
 
-  if (loading) return <div className={styles.loading}>A carregar…</div>
-  if (erro)    return <div className={styles.erro}>Erro: {erro}</div>
-  if (!eq)     return null
+  if (loading) return <div className={styles.loading}>A carregar...</div>
+  if (erro) return <div className={styles.erro}>Erro: {erro}</div>
+  if (!eq) return null
 
-  const avariaAbertas = avarias.filter(a => !a.resolvida).length
+  const avariaAbertas = avarias.filter((a) => !a.resolvida).length
 
   return (
     <div className="fade-up">
@@ -135,7 +150,6 @@ export default function DetalheEquipamento() {
         </div>
       </div>
 
-      {/* DADOS TÉCNICOS */}
       <div className={styles.infoGrid}>
         <div className={styles.infoCard}>
           <div className="label">Estado Atual</div>
@@ -157,45 +171,43 @@ export default function DetalheEquipamento() {
         </div>
       </div>
 
-      {/* CONTROLO DE UTILIZAÇÃO REAL (OEE) */}
       <div className={styles.section}>
         <div className="label" style={{ marginBottom: 14 }}>Controlo de Utilização (OEE)</div>
         <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
           Registe o início e fim da operação no equipamento para cálculo de eficiência laboratorial.
         </p>
         <div className={styles.acoes}>
-          <button 
-            className={styles.btnAmber} 
+          <button
+            className={styles.btnAmber}
             style={{ backgroundColor: '#2563eb', color: 'white', borderColor: '#1d4ed8' }}
-            onClick={handleCheckin} 
+            onClick={handleCheckin}
           >
-            ▶ Iniciar Check-in
+            Iniciar Check-in
           </button>
-          <button 
-            className={styles.back} 
+          <button
+            className={styles.back}
             style={{ backgroundColor: '#334155', color: 'white' }}
             onClick={handleCheckout}
           >
-            ■ Terminar Trabalho
+            Terminar Trabalho
           </button>
         </div>
       </div>
 
-      {/* AÇÕES MANUAIS */}
       <div className={styles.section}>
-        <div className="label" style={{ marginBottom: 14 }}>Ações</div>
+        <div className="label" style={{ marginBottom: 14 }}>Acções</div>
         <div className={styles.acoes}>
-          <button className={styles.btnAmber} onClick={() => setModalEstado(true)}>⟳ Atualizar Estado</button>
-          <button className={styles.btnRed} onClick={() => setModalAvaria(true)}>⚠ Registar Avaria</button>
+          <button className={styles.btnAmber} onClick={() => setModalEstado(true)}>Atualizar Estado</button>
+          <button className={styles.btnRed} onClick={() => setModalAvaria(true)}>Registar Avaria</button>
         </div>
       </div>
 
       <QRCodeDisplay equipamento={eq} />
-      {/* TABS: HISTÓRICO */}
+
       <div className={styles.section}>
         <div className={styles.tabs}>
           {[
-            ['avarias',     `Avarias${avariaAbertas > 0 ? ` (${avariaAbertas} abertas)` : ` (${avarias.length})`}`],
+            ['avarias', `Avarias${avariaAbertas > 0 ? ` (${avariaAbertas} abertas)` : ` (${avarias.length})`}`],
             ['manutencoes', `Manutenções (${manutencoes.length})`],
             ['calibracoes', `Calibrações (${calibracoes.length})`],
           ].map(([key, label]) => (
@@ -205,16 +217,13 @@ export default function DetalheEquipamento() {
           ))}
         </div>
 
-        {/* CONTEÚDO DAS TABS */}
-        
-        {/* Avarias tab */}
         {tab === 'avarias' && (
           <table className={styles.table}>
             <thead><tr><th>#</th><th>Descrição</th><th>Data</th><th>Estado</th><th>Resolução</th></tr></thead>
             <tbody>
-              {avarias.map(av => (
+              {avarias.map((av) => (
                 <tr key={av.id}>
-                  <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(av.id).padStart(3,'0')}</td>
+                  <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(av.id).padStart(3, '0')}</td>
                   <td style={{ color: 'var(--text-secondary)' }}>{av.descricao}</td>
                   <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(av.data_registo)}</td>
                   <td>{av.resolvida ? <span className="badge badge-ok">Resolvida</span> : <span className="badge badge-nok">Aberta</span>}</td>
@@ -226,14 +235,13 @@ export default function DetalheEquipamento() {
           </table>
         )}
 
-        {/* Manutenções tab */}
         {tab === 'manutencoes' && (
           <table className={styles.table}>
             <thead><tr><th>#</th><th>Descrição</th><th>Data Realizada</th><th>Próxima</th></tr></thead>
             <tbody>
-              {manutencoes.map(mn => (
+              {manutencoes.map((mn) => (
                 <tr key={mn.id}>
-                  <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(mn.id).padStart(3,'0')}</td>
+                  <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(mn.id).padStart(3, '0')}</td>
                   <td style={{ color: 'var(--text-secondary)' }}>{mn.descricao}</td>
                   <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(mn.data_realizada)}</td>
                   <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(mn.proxima_data)}</td>
@@ -244,14 +252,13 @@ export default function DetalheEquipamento() {
           </table>
         )}
 
-        {/* Calibrações tab */}
         {tab === 'calibracoes' && (
           <table className={styles.table}>
             <thead><tr><th>#</th><th>Data Realizada</th><th>Próxima</th><th>Certificado</th></tr></thead>
             <tbody>
-              {calibracoes.map(cal => (
+              {calibracoes.map((cal) => (
                 <tr key={cal.id}>
-                  <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(cal.id).padStart(3,'0')}</td>
+                  <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(cal.id).padStart(3, '0')}</td>
                   <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(cal.data_realizada)}</td>
                   <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(cal.proxima_data)}</td>
                   <td>{cal.certificado_url ? <a href={cal.certificado_url} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', fontSize: 12 }}>Ver →</a> : '—'}</td>
@@ -263,15 +270,14 @@ export default function DetalheEquipamento() {
         )}
       </div>
 
-      {/* Modal: Atualizar Estado */}
       {modalEstado && (
         <div className={styles.overlay} onClick={() => setModalEstado(false)}>
-          <div className={styles.modal} onClick={e => e.stopPropagation()}>
+          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div className="label" style={{ marginBottom: 8 }}>Equipamento</div>
             <h2 className={styles.modalTitle}>Atualizar Estado</h2>
             <p className={styles.modalDesc}>Estado atual: <StatusBadge estado={eq.estado_atual} /></p>
             <div className={styles.stateOptions}>
-              {ESTADOS.map(e => (
+              {ESTADOS.map((e) => (
                 <label key={e} className={`${styles.stateOpt} ${novoEstado === e ? styles.stateOptActive : ''}`}>
                   <input type="radio" name="estado" value={e} checked={novoEstado === e} onChange={() => setNovoEstado(e)} style={{ display: 'none' }} />
                   <StatusBadge estado={e} />
@@ -281,29 +287,27 @@ export default function DetalheEquipamento() {
             <div className={styles.modalActions}>
               <button className={styles.btnSecondary} onClick={() => setModalEstado(false)}>Cancelar</button>
               <button className={styles.btnAmber} onClick={handleEstado} disabled={savingEstado || novoEstado === eq.estado_atual}>
-                {savingEstado ? 'A guardar…' : 'Confirmar'}
+                {savingEstado ? 'A guardar...' : 'Confirmar'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: Registar Avaria */}
       {modalAvaria && (
         <div className={styles.overlay} onClick={() => setModalAvaria(false)}>
-          <div className={styles.modal} onClick={e => e.stopPropagation()}>
+          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div className="label" style={{ marginBottom: 8 }}>Avaria</div>
             <h2 className={styles.modalTitle} style={{ color: 'var(--red)' }}>Registar Avaria</h2>
-            <p className={styles.modalDesc}>O equipamento passará automaticamente para estado <strong>NOK</strong>.</p>
+            <p className={styles.modalDesc}>O equipamento passará automaticamente para estado <strong>Avariado</strong>.</p>
             {msgAvaria
               ? <div className={styles.sucesso}>{msgAvaria}</div>
-              : <textarea className={styles.textarea} rows={4} placeholder="Descreve o problema detectado…" value={descAvaria} onChange={e => setDescAvaria(e.target.value)} />
-            }
+              : <textarea className={styles.textarea} rows={4} placeholder="Descreve o problema detectado..." value={descAvaria} onChange={(e) => setDescAvaria(e.target.value)} />}
             <div className={styles.modalActions}>
               <button className={styles.btnSecondary} onClick={() => { setModalAvaria(false); setDescAvaria('') }}>Cancelar</button>
               {!msgAvaria && (
                 <button className={styles.btnRed} onClick={handleAvaria} disabled={savingAvaria || !descAvaria.trim()}>
-                  {savingAvaria ? 'A registar…' : '⚠ Registar Avaria'}
+                  {savingAvaria ? 'A registar...' : 'Registar Avaria'}
                 </button>
               )}
             </div>

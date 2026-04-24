@@ -1,9 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/index.js'
 import { useToast } from '../components/ToastProvider.jsx'
 import styles from './Manutencoes.module.css'
+import { useEquipamentos } from '../hooks/useEquipamentos.js'
+import ResourceTable from '../components/ResourceTable.jsx'
+import StatusBadge from '../components/StatusBadge.jsx'
 
+/**
+ * Página: Manutenções
+ * Lista manutenções, permite registar uma nova manutenção.
+ * Refactor: usa `useEquipamentos`, `ResourceTable` e memoização.
+ */
 function fmt(dt) {
   if (!dt) return '—'
   return new Date(dt).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -24,8 +32,9 @@ const EMPTY = { descricao: '', data_realizada: '', proxima_data: '' }
 
 export default function Manutencoes() {
   const toast = useToast()
+  const { map: equipamentos, list: equipamentosList, loading: eqLoading } = useEquipamentos()
+
   const [manutencoes, setManutencoes] = useState([])
-  const [equipamentos, setEquipamentos] = useState({})
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(false)
   const [eqSel, setEqSel] = useState('')
@@ -33,28 +42,22 @@ export default function Manutencoes() {
   const [saving, setSaving] = useState(false)
   const [formErro, setFormErro] = useState('')
 
-  const carregar = async () => {
+  const carregar = useCallback(async () => {
     setLoading(true)
     try {
-      const [mn, eqs] = await Promise.all([
-        api.listarTodasManutencoes(),
-        api.listarEquipamentos(),
-      ])
+      const mn = await api.listarTodasManutencoes()
       setManutencoes(mn)
-      const map = {}
-      eqs.forEach(e => { map[e.id] = e })
-      setEquipamentos(map)
-      if (eqs.length > 0 && !eqSel) setEqSel(String(eqs[0].id))
+      if (equipamentosList.length > 0 && !eqSel) setEqSel(String(equipamentosList[0].id))
     } catch (e) {
       toast.error(`Falha ao carregar manutenções: ${e.message}`)
     } finally {
       setLoading(false)
     }
-  }
+  }, [equipamentosList, eqSel, toast])
 
-  useEffect(() => { carregar() }, [])
+  useEffect(() => { carregar() }, [carregar])
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     if (!eqSel || !form.descricao || !form.data_realizada) {
       setFormErro('Preenche os campos obrigatórios.')
       toast.error('Faltam campos obrigatórios na manutenção.')
@@ -79,7 +82,35 @@ export default function Manutencoes() {
     } finally {
       setSaving(false)
     }
-  }
+  }, [eqSel, form, carregar, toast])
+
+  const loadingPage = loading || eqLoading
+
+  const renderRow = useCallback((mn) => {
+    const eq = equipamentos[mn.equipamento_id]
+    const proxVencida = isVencida(mn.proxima_data)
+    const proxProxima = isProxima(mn.proxima_data)
+    return (
+      <tr key={mn.id}>
+        <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(mn.id).padStart(3,'0')}</td>
+        <td>
+          {eq
+            ? <Link to={`/equipamentos/${eq.id}`} className={styles.eqLink}>{eq.nome}</Link>
+            : `EQ-${mn.equipamento_id}`
+          }
+        </td>
+        <td className={styles.descricao}>{mn.descricao}</td>
+        <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(mn.data_realizada)}</td>
+        <td>
+          {mn.proxima_data ? (
+            <StatusBadge variant={proxVencida ? 'nok' : proxProxima ? 'ocupado' : 'ok'}>
+              {proxVencida && '⚠ '}{proxProxima && '● '}{fmt(mn.proxima_data)}
+            </StatusBadge>
+          ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
+        </td>
+      </tr>
+    )
+  }, [equipamentos])
 
   return (
     <div className="fade-up">
@@ -93,52 +124,18 @@ export default function Manutencoes() {
         </button>
       </div>
 
-      {loading && <div className={styles.empty}>A carregar…</div>}
+      {loadingPage && <div className={styles.empty}>A carregar…</div>}
 
-      {!loading && (
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Equipamento</th>
-                <th>Descrição</th>
-                <th>Data Realizada</th>
-                <th>Próxima Manutenção</th>
-              </tr>
-            </thead>
-            <tbody>
-              {manutencoes.map(mn => {
-                const eq = equipamentos[mn.equipamento_id]
-                const proxVencida = isVencida(mn.proxima_data)
-                const proxProxima = isProxima(mn.proxima_data)
-                return (
-                  <tr key={mn.id}>
-                    <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(mn.id).padStart(3,'0')}</td>
-                    <td>
-                      {eq
-                        ? <Link to={`/equipamentos/${eq.id}`} className={styles.eqLink}>{eq.nome}</Link>
-                        : `EQ-${mn.equipamento_id}`
-                      }
-                    </td>
-                    <td className={styles.descricao}>{mn.descricao}</td>
-                    <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(mn.data_realizada)}</td>
-                    <td>
-                      {mn.proxima_data ? (
-                        <span className={`mono ${proxVencida ? styles.vencida : proxProxima ? styles.proxima : ''}`} style={{ fontSize: 12 }}>
-                          {proxVencida && '⚠ '}{proxProxima && '● '}{fmt(mn.proxima_data)}
-                        </span>
-                      ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
-                    </td>
-                  </tr>
-                )
-              })}
-              {manutencoes.length === 0 && (
-                <tr><td colSpan={5} className={styles.empty}>Nenhuma manutenção registada.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      {!loadingPage && (
+        <ResourceTable
+          columns={[ '#', 'Equipamento', 'Descrição', 'Data Realizada', 'Próxima Manutenção' ]}
+          items={manutencoes}
+          renderRow={renderRow}
+          loading={false}
+          emptyNode={(<div className={styles.empty}>Nenhuma manutenção registada.</div>)}
+          wrapperClass={styles.tableWrap}
+          tableClass={styles.table}
+        />
       )}
 
       {/* Modal */}

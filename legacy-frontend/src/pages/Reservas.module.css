@@ -1,6 +1,6 @@
-.header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
-.headerActions { display: flex; gap: 10px; align-items: center; }
-.title { font-family: var(--font-display); font-size: 32px; font-weight: 700; letter-spacing: 0.03em; margin-top: 4px; }
+.header { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; align-items: stretch; }
+.headerActions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
+.title { font-family: var(--font-display); font-size: 20px; font-weight: 700; letter-spacing: 0.02em; margin-top: 2px; }
 .loading { padding: 40px; text-align: center; font-family: var(--font-mono); font-size: 13px; color: var(--text-dim); }
 
 /* FullCalendar overrides para tema escuro */
@@ -8,7 +8,8 @@
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 20px;
+  padding: 12px;
+  overflow: auto;
 }
 .calendarWrap :global(.fc) { color: var(--text-primary); }
 .calendarWrap :global(.fc-toolbar-title) { font-family: var(--font-display); font-size: 20px; font-weight: 700; color: var(--text-primary); }
@@ -31,7 +32,7 @@
   background: var(--bg-panel);
   border: 1px solid var(--border-bright);
   border-radius: var(--radius-lg);
-  width: 260px;
+  width: min(92vw, 320px);
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   animation: fadeIn 0.15s ease;
 }
@@ -57,7 +58,7 @@
 
 /* Modal */
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.modal { background: var(--bg-panel); border: 1px solid var(--border-bright); border-radius: var(--radius-lg); width: 520px; max-width: 95vw; padding: 28px; animation: slideUp 0.2s ease; }
+.modal { background: var(--bg-panel); border: 1px solid var(--border-bright); border-radius: var(--radius-lg); width: 95vw; max-width: 95vw; padding: 18px; animation: slideUp 0.2s ease; }
 @keyframes slideUp { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 .modalTitle { font-family: var(--font-display); font-size: 22px; font-weight: 700; margin-bottom: 18px; }
 .modalHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; }
@@ -81,7 +82,7 @@
 }
 .fields { display: flex; flex-direction: column; gap: 14px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.row { display: grid; grid-template-columns: 1fr; gap: 12px; }
 .input { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 12px; color: var(--text-primary); font-size: 13px; outline: none; transition: border-color var(--transition); width: 100%; }
 .input:focus { border-color: var(--amber-dim); }
 .textarea { width: 100%; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 12px; color: var(--text-primary); font-size: 13px; font-family: var(--font-body); outline: none; resize: vertical; transition: border-color var(--transition); }
@@ -94,16 +95,15 @@
 .btnSecondary { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 18px; font-size: 13px; cursor: pointer; transition: all var(--transition); }
 .btnSecondary:hover { border-color: var(--border-bright); color: var(--text-primary); }
 
-@media (max-width: 760px) {
-  .header {
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .headerActions {
-    width: 100%;
-    justify-content: flex-end;
-  }
+@media (min-width: 760px) {
+  /* Desktop/tablet layout overrides */
+  .header { flex-direction: row; align-items: flex-start; justify-content: space-between; }
+  .title { font-size: 32px; }
+  .calendarWrap { padding: 20px; }
+  .modal { width: 520px; padding: 28px; }
+  .row { grid-template-columns: 1fr 1fr; }
+  .headerActions { width: auto; }
+  .tableWrap { overflow: visible; }
 }
 
 .quickHours {

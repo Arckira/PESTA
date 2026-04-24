@@ -111,5 +111,5 @@ input, select, textarea { font-family: inherit; }
 }
 .fade-up { animation: fadeUp 0.35s ease forwards; }
 
-.badge-disponivel { background: rgba(59,130,246,0.12); border-color: var(--blue); color: var(--blue); }
-.badge-disponivel::before { background: var(--blue); }
+.badge-disponivel { background: var(--green-glow); border-color: var(--green); color: var(--green); }
+.badge-disponivel::before { background: var(--green); animation: pulse 2s infinite; }

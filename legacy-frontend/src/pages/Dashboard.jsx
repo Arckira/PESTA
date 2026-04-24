@@ -1,15 +1,16 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import FullCalendar from '@fullcalendar/react'
+import resourceTimelinePlugin from '@fullcalendar/resource-timeline'
+import interactionPlugin from '@fullcalendar/interaction'
+
 import { api } from '../api/index.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import styles from './Dashboard.module.css'
-import FullCalendar from '@fullcalendar/react'
-import resourceTimelinePlugin from '@fullcalendar/resource-timeline'
-import interactionPlugin from '@fullcalendar/interaction'
 
-const ESTADOS = ['Em funcionamento', 'NOK', 'Ocupado', 'Em calibração', 'Em manutenção']
+const ESTADOS = ['Disponível', 'Ocupado', 'Avariado', 'Em calibração', 'Em manutenção']
 
 export default function Dashboard() {
   const toast = useToast()
@@ -103,17 +104,19 @@ export default function Dashboard() {
     }
   }
 
-  useEffect(() => { carregarDados() }, [user?.role])
+  useEffect(() => {
+    carregarDados()
+  }, [user?.role])
 
-  const { total, nok, ok, calib, manut, ocupados, recentes } = useMemo(() => {
+  const { total, avariados, disponiveis, calib, manut, ocupados, recentes } = useMemo(() => {
     const list = equipamentos || []
     return {
       total: list.length,
-      nok: list.filter(e => e.estado_atual === 'NOK').length,
-      ok: list.filter(e => e.estado_atual === 'Em funcionamento').length,
-      calib: list.filter(e => e.estado_atual === 'Em calibração').length,
-      manut: list.filter(e => e.estado_atual === 'Em manutenção').length,
-      ocupados: list.filter(e => e.estado_atual === 'Ocupado').length,
+      avariados: list.filter((e) => e.estado_atual === 'Avariado').length,
+      disponiveis: list.filter((e) => e.estado_atual === 'Disponível').length,
+      calib: list.filter((e) => e.estado_atual === 'Em calibração').length,
+      manut: list.filter((e) => e.estado_atual === 'Em manutenção').length,
+      ocupados: list.filter((e) => e.estado_atual === 'Ocupado').length,
       recentes: [...list].sort((a, b) => b.id - a.id).slice(0, 6),
     }
   }, [equipamentos])
@@ -121,14 +124,14 @@ export default function Dashboard() {
   const proximasReservas = useMemo(() => {
     const agora = Date.now()
     return [...reservas]
-      .filter(r => new Date(r.data_inicio).getTime() >= agora)
+      .filter((r) => new Date(r.data_inicio).getTime() >= agora)
       .sort((a, b) => new Date(a.data_inicio) - new Date(b.data_inicio))
       .slice(0, 4)
   }, [reservas])
 
-  const taxaDisponibilidade = total ? Math.round((ok / total) * 100) : 0
-  const taxaNok = total ? Math.round((nok / total) * 100) : 0
-  const semAlertasCriticos = nok === 0 && manut === 0 && calib === 0
+  const taxaDisponibilidade = total ? Math.round((disponiveis / total) * 100) : 0
+  const taxaAvarias = total ? Math.round((avariados / total) * 100) : 0
+  const semAlertasCriticos = avariados === 0 && manut === 0 && calib === 0
   const statusVisual = total === 0
     ? 'neutral'
     : taxaDisponibilidade < 50
@@ -159,7 +162,7 @@ export default function Dashboard() {
             <div className={`${styles.heroTrackFill} ${styles[`heroTrackFill_${statusVisual}`]}`} style={{ width: `${taxaDisponibilidade}%` }} />
           </div>
           <div className={styles.heroMeta}>
-            <span>{ok} em funcionamento</span>
+            <span>{disponiveis} disponíveis</span>
             <span>{total} total</span>
           </div>
         </article>
@@ -171,12 +174,12 @@ export default function Dashboard() {
           ) : (
             <>
               <div className={styles.alertNumbers}>
-                <div><strong>{nok}</strong> NOK</div>
+                <div><strong>{avariados}</strong> avariados</div>
                 <div><strong>{manut}</strong> manutenção</div>
                 <div><strong>{calib}</strong> calibração</div>
-                <div><strong>{ocupados}</strong> ocupado</div>
+                <div><strong>{ocupados}</strong> ocupados</div>
               </div>
-              <div className={styles.alertFoot}>{taxaNok > 0 ? `${taxaNok}% da frota com avaria.` : 'Monitorização ativa em curso.'}</div>
+              <div className={styles.alertFoot}>{taxaAvarias > 0 ? `${taxaAvarias}% da frota com avaria.` : 'Monitorização ativa em curso.'}</div>
             </>
           )}
         </article>
@@ -256,7 +259,7 @@ export default function Dashboard() {
               onClick={handleExportarPlaneamentoPdf}
               disabled={exportingPlaneamento}
             >
-              {exportingPlaneamento ? 'A exportar…' : 'Exportar PDF'}
+              {exportingPlaneamento ? 'A exportar...' : 'Exportar PDF'}
             </button>
             <span className={styles.hint}>Seleciona no calendário para criar reserva</span>
           </div>
@@ -326,7 +329,7 @@ export default function Dashboard() {
         </div>
 
         {loading && <div className={styles.empty}>A carregar...</div>}
-        {erro    && <div className={styles.erro}>Erro: {erro}</div>}
+        {erro && <div className={styles.erro}>Erro: {erro}</div>}
 
         {!loading && !erro && (
           <table className={styles.table}>

@@ -1,18 +1,18 @@
 .header {
+  /* Mobile-first: coluna por defeito */
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 24px;
-  flex-wrap: wrap;
-  gap: 16px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  margin-bottom: 18px;
 }
 
 .title {
   font-family: var(--font-display);
-  font-size: 32px;
+  font-size: 20px;
   font-weight: 700;
-  letter-spacing: 0.03em;
-  margin-top: 4px;
+  letter-spacing: 0.02em;
+  margin-top: 2px;
 }
 
 /* Pills */
@@ -35,13 +35,13 @@
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 9px 14px;
+  padding: 9px 12px;
   color: var(--text-primary);
   font-size: 13px;
   outline: none;
   transition: border-color var(--transition);
-  width: 320px;
-  max-width: 60vw;
+  width: 100%;
+  min-width: 0;
 }
 
 .search:focus { border-color: var(--amber-dim); }
@@ -97,11 +97,12 @@
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow: auto; /* permite scroll horizontal em mobile */
 }
 
 .table {
   width: 100%;
+  min-width: 720px; /* evita colapsar em tabelas complexas; scroll no wrapper */
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -132,7 +133,7 @@
 .rowResolvida td:first-child { border-left: 2px solid var(--green); }
 
 .descricao {
-  max-width: 280px;
+  max-width: 300px;
   color: var(--text-secondary);
   line-height: 1.4;
 }
@@ -181,8 +182,8 @@
   background: var(--bg-panel);
   border: 1px solid var(--border-bright);
   border-radius: var(--radius-lg);
-  width: 460px; max-width: 95vw;
-  padding: 28px;
+  width: 95vw; max-width: 95vw; /* mobile-first: ocupar largura disponível */
+  padding: 20px;
   animation: slideUp 0.2s ease;
 }
 
@@ -193,8 +194,8 @@
 
 .modalTitle {
   font-family: var(--font-display);
-  font-size: 22px; font-weight: 700;
-  margin-bottom: 10px;
+  font-size: 18px; font-weight: 700;
+  margin-bottom: 8px;
 }
 
 .modalDesc {
@@ -245,9 +246,9 @@
   color: #000;
   border: none;
   border-radius: var(--radius);
-  padding: 9px 18px;
+  padding: 9px 14px;
   font-family: var(--font-display);
-  font-size: 14px; font-weight: 600;
+  font-size: 13px; font-weight: 600;
   transition: opacity var(--transition);
 }
 .btnGreen:hover:not(:disabled) { opacity: 0.85; }

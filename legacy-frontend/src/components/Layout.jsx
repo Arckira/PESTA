@@ -21,9 +21,9 @@ export default function Layout({ children }) {
       <aside className={styles.sidebar}>
         <div className={styles.logo}>
           <Link to="/" className={styles.logoLink} aria-label="Ir para o dashboard">
-            <span className={styles.logoMark}>YZ</span>
-            <div>
-              <div className={styles.logoSub}>Testing Centre</div>
+            <div className={styles.logoBrand}>
+              <div className={styles.logoMark}>INDUSTRIAL TESTING LAB</div>
+              <div className={styles.logoSub}>TESTING CENTRE</div>
             </div>
           </Link>
         </div>

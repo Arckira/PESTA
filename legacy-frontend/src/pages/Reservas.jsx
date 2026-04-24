@@ -1,13 +1,14 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import ptLocale from '@fullcalendar/core/locales/pt'
-import { api } from '../api/index.js'
 import { useToast } from '../components/ToastProvider.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import styles from './Reservas.module.css'
+import { useReservas } from '../hooks/useReservas.js'
+
 
 // Paleta de cores por equipamento (rotativa)
 const CORES = [
@@ -21,10 +22,7 @@ const CORES = [
 export default function Reservas() {
   const toast = useToast()
   const { user } = useAuth()
-  const [eventos, setEventos] = useState([])
-  const [equipamentos, setEquipamentos] = useState([])
-  const [utilizadores, setUtilizadores] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { eventos, equipamentos, utilizadores, loading, reload, createReserva, reservasPorDia, exportPdf } = useReservas(user?.role)
 
   // Dropdown ao clicar num dia
   const [dropdown, setDropdown] = useState(null) // { data, x, y, reservas[] }
@@ -38,69 +36,25 @@ export default function Reservas() {
 
   const calendarRef = useRef(null)
 
-  const formatLocalInput = (date) => {
+  const formatLocalInput = useCallback((date) => {
     const d = new Date(date)
     const pad = (n) => String(n).padStart(2, '0')
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  }
+  }, [])
 
-  const setDuracaoHoras = (horas) => {
+  const setDuracaoHoras = useCallback((horas) => {
     if (!form.data_inicio) return
     const inicio = new Date(form.data_inicio)
     const fim = new Date(inicio.getTime() + horas * 60 * 60 * 1000)
     setForm((f) => ({ ...f, data_fim: formatLocalInput(fim) }))
-  }
-
-  const carregar = async () => {
-    setLoading(true)
-    try {
-      const [reservas, eqs, uts] = await Promise.all([
-        api.listarReservas(),
-        api.listarEquipamentos(),
-        user?.role === 'admin' ? api.listarUtilizadores() : Promise.resolve([]),
-      ])
-      setEquipamentos(eqs)
-      setUtilizadores(uts)
-
-      // Mapeia reservas para eventos do FullCalendar
-      // Porquê: FullCalendar espera { title, start, end, color, extendedProps }
-      const corMap = {}
-      eqs.forEach((eq, i) => { corMap[eq.id] = CORES[i % CORES.length] })
-
-      const evs = reservas.map(r => ({
-        id: String(r.id),
-        title: r.utilizador_iniciais || (r.utilizador_nome ? r.utilizador_nome.split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase() : ''),
-        start: r.data_inicio,
-        end: r.data_fim,
-        backgroundColor: corMap[r.equipamento_id]?.bg ?? '#1e3a5f',
-        borderColor: corMap[r.equipamento_id]?.border ?? '#378ADD',
-        textColor: '#e8eaf0',
-        extendedProps: { ...r },
-      }))
-      setEventos(evs)
-    } catch (e) {
-      toast.error(`Falha ao carregar reservas: ${e.message}`)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => { carregar() }, [user?.role])
-
-  useEffect(() => {
-    if (modal && utilizadores.length === 0 && user) {
-      api.listarUtilizadores()
-        .then(setUtilizadores)
-        .catch((e) => toast.error(`Falha ao carregar utilizadores: ${e.message}`))
-    }
-  }, [modal, utilizadores.length, user])
+  }, [form.data_inicio, formatLocalInput])
 
   // Clique num dia — abre dropdown com utilizadores reservados nesse dia
-  const handleDateClick = async (info) => {
+  const handleDateClick = useCallback(async (info) => {
     const rect = info.jsEvent.target.getBoundingClientRect()
     const data = info.dateStr // YYYY-MM-DD
     try {
-      const reservasDia = await api.reservasPorDia(data)
+      const reservasDia = await reservasPorDia(data)
       setDropdown({
         data,
         x: rect.left,
@@ -111,7 +65,7 @@ export default function Reservas() {
       toast.error('Não foi possível carregar as reservas desse dia.')
       setDropdown({ data, x: rect.left, y: rect.bottom + window.scrollY + 4, reservas: [] })
     }
-  }
+  }, [reservasPorDia, toast])
 
   // Seleção direta no calendário (vista semanal/diária) para reservas por hora
   const handleTimeSelect = (info) => {
@@ -124,7 +78,7 @@ export default function Reservas() {
     setModal(true)
   }
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     if (!form.equipamento_id || !form.utilizador_id || !form.data_inicio || !form.data_fim) {
       setFormErro('Preenche os campos obrigatórios.')
       toast.error('Faltam campos obrigatórios na reserva.')
@@ -151,7 +105,7 @@ export default function Reservas() {
     setSaving(true)
     setFormErro('')
     try {
-      await api.criarReserva({
+      await createReserva({
         equipamento_id: parseInt(form.equipamento_id),
         utilizador_id:  parseInt(form.utilizador_id),
         projeto:        form.projeto || null,
@@ -162,19 +116,18 @@ export default function Reservas() {
       toast.success('Reserva criada com sucesso.')
       setModal(false)
       setForm({ equipamento_id: '', utilizador_id: '', projeto: '', data_inicio: '', data_fim: '', notas: '' })
-      carregar()
     } catch (e) {
       setFormErro(e.message)
       toast.error(e.message || 'Não foi possível criar a reserva.')
     } finally {
       setSaving(false)
     }
-  }
+  }, [createReserva, form, toast])
 
-  const handleExportPdf = async () => {
+  const handleExportPdf = useCallback(async () => {
     setExporting(true)
     try {
-      const blob = await api.exportarReservasPdf()
+      const blob = await exportPdf()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       const now = new Date()
@@ -192,7 +145,7 @@ export default function Reservas() {
     } finally {
       setExporting(false)
     }
-  }
+  }, [exportPdf, toast])
 
   return (
     <div className="fade-up" onClick={() => setDropdown(null)}>

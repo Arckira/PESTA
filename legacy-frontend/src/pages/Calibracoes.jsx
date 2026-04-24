@@ -1,11 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/index.js'
 import EmptyState from '../components/EmptyState.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import { downloadCsv } from '../utils/downloadCsv.js'
 import styles from './Calibracoes.module.css'
+import { useEquipamentos } from '../hooks/useEquipamentos.js'
+import StatusBadge from '../components/StatusBadge.jsx'
+import ResourceTable from '../components/ResourceTable.jsx'
 
+/**
+ * Página: Calibrações
+ * Lista calibrações, filtra por urgência e permite registar uma nova calibração.
+ * Refactor: usa `useEquipamentos`, `ResourceTable` e memoização para reduzir re-renders.
+ */
 function fmt(dt) {
   if (!dt) return '—'
   return new Date(dt).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -20,8 +28,9 @@ const EMPTY = { data_realizada: '', proxima_data: '', certificado_url: '' }
 
 export default function Calibracoes() {
   const toast = useToast()
+  const { map: equipamentos, list: equipamentosList, loading: eqLoading, reload: reloadEquipamentos } = useEquipamentos()
+
   const [calibracoes, setCalibracoes] = useState([])
-  const [equipamentos, setEquipamentos] = useState({})
   const [proximas, setProximas] = useState([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(false)
@@ -32,28 +41,24 @@ export default function Calibracoes() {
   const [pesquisa, setPesquisa] = useState('')
   const [filtroUrgencia, setFiltroUrgencia] = useState('todas')
 
-  const carregar = async () => {
+  const carregar = useCallback(async () => {
     setLoading(true)
     try {
-      const [cal, eqs, prox] = await Promise.all([
+      const [cal, prox] = await Promise.all([
         api.listarTodasCalibracoes(),
-        api.listarEquipamentos(),
         api.calibracoesProximas(30),
       ])
       setCalibracoes(cal)
       setProximas(prox)
-      const map = {}
-      eqs.forEach(e => { map[e.id] = e })
-      setEquipamentos(map)
-      if (eqs.length > 0 && !eqSel) setEqSel(String(eqs[0].id))
+      if (equipamentosList.length > 0 && !eqSel) setEqSel(String(equipamentosList[0].id))
     } catch (e) {
       toast.error(`Falha ao carregar calibrações: ${e.message}`)
     } finally {
       setLoading(false)
     }
-  }
+  }, [equipamentosList, eqSel, toast])
 
-  useEffect(() => { carregar() }, [])
+  useEffect(() => { carregar() }, [carregar])
 
   const pesquisaLower = pesquisa.trim().toLowerCase()
 
@@ -89,14 +94,14 @@ export default function Calibracoes() {
     })
   }, [calibracoes, equipamentos, pesquisaLower, filtroUrgencia])
 
-  const fmtCsv = (dt) => {
+  const fmtCsv = useCallback((dt) => {
     if (!dt) return ''
     const d = new Date(dt)
     if (Number.isNaN(d.getTime())) return ''
     return d.toISOString().slice(0, 19).replace('T', ' ')
-  }
+  }, [])
 
-  const handleExport = () => {
+  const handleExport = useCallback(() => {
     if (!calibracoesFiltradas || calibracoesFiltradas.length === 0) return
 
     const filename = `calibracoes-${new Date().toISOString().slice(0, 10)}.csv`
@@ -141,9 +146,9 @@ export default function Calibracoes() {
         { key: 'certificado_url', header: 'Certificado' },
       ],
     })
-  }
+  }, [calibracoesFiltradas, equipamentos, fmtCsv])
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     if (!eqSel || !form.data_realizada) {
       setFormErro('Preenche os campos obrigatórios.')
       toast.error('Faltam campos obrigatórios na calibração.')
@@ -162,13 +167,54 @@ export default function Calibracoes() {
       setModal(false)
       setForm(EMPTY)
       carregar()
+      reloadEquipamentos()
     } catch (e) {
       setFormErro(e.message)
       toast.error(e.message || 'Não foi possível registar calibração.')
     } finally {
       setSaving(false)
     }
-  }
+  }, [eqSel, form, carregar, reloadEquipamentos, toast])
+
+  const loadingPage = loading || eqLoading
+
+  const renderRow = useCallback((cal) => {
+    const eq = equipamentos[cal.equipamento_id]
+    const dias = diasRestantes(cal.proxima_data)
+    const vencida = dias !== null && dias < 0
+    const urgente = dias !== null && dias >= 0 && dias <= 30
+
+    return (
+      <tr key={cal.id}>
+        <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(cal.id).padStart(3,'0')}</td>
+        <td>
+          {eq
+            ? <Link to={`/equipamentos/${eq.id}`} className={styles.eqLink}>{eq.nome}</Link>
+            : `EQ-${cal.equipamento_id}`
+          }
+        </td>
+        <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(cal.data_realizada)}</td>
+        <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(cal.proxima_data)}</td>
+        <td>
+          {dias !== null ? (
+            <StatusBadge variant={vencida ? 'nok' : urgente ? 'ocupado' : 'ok'}>
+              {vencida
+                ? `Vencida há ${Math.abs(dias)}d`
+                : urgente
+                  ? `A vencer em ${dias}d`
+                  : `Em dia (${dias}d)`}
+            </StatusBadge>
+          ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
+        </td>
+        <td>
+          {cal.certificado_url
+            ? <a href={cal.certificado_url} target="_blank" rel="noreferrer" className={styles.certLink}>Ver →</a>
+            : <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>—</span>
+          }
+        </td>
+      </tr>
+    )
+  }, [equipamentos])
 
   return (
     <div className="fade-up">
@@ -224,99 +270,48 @@ export default function Calibracoes() {
         <button
           type="button"
           className={styles.btnExport}
-          disabled={loading || calibracoesFiltradas.length === 0}
+          disabled={loadingPage || calibracoesFiltradas.length === 0}
           onClick={handleExport}
         >
           Exportar CSV
         </button>
       </div>
 
-      {loading && <div className={styles.empty}>A carregar…</div>}
+      {loadingPage && <div className={styles.empty}>A carregar…</div>}
 
-      {!loading && (
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Equipamento</th>
-                <th>Data Realizada</th>
-                <th>Próxima Calibração</th>
-                <th>Dias Restantes</th>
-                <th>Certificado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {calibracoesFiltradas.map(cal => {
-                const eq = equipamentos[cal.equipamento_id]
-                const dias = diasRestantes(cal.proxima_data)
-                const vencida = dias !== null && dias < 0
-                const urgente = dias !== null && dias >= 0 && dias <= 30
-                return (
-                  <tr key={cal.id}>
-                    <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(cal.id).padStart(3,'0')}</td>
-                    <td>
-                      {eq
-                        ? <Link to={`/equipamentos/${eq.id}`} className={styles.eqLink}>{eq.nome}</Link>
-                        : `EQ-${cal.equipamento_id}`
-                      }
-                    </td>
-                    <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(cal.data_realizada)}</td>
-                    <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(cal.proxima_data)}</td>
-                    <td>
-                      {dias !== null ? (
-                        <span
-                          className={`badge ${vencida ? 'badge-nok' : urgente ? 'badge-ocupado' : 'badge-ok'}`}
-                          style={{ fontSize: 12, whiteSpace: 'nowrap' }}
-                        >
-                          {vencida
-                            ? `Vencida há ${Math.abs(dias)}d`
-                            : urgente
-                              ? `A vencer em ${dias}d`
-                              : `Em dia (${dias}d)`}
-                        </span>
-                      ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
-                    </td>
-                    <td>
-                      {cal.certificado_url
-                        ? <a href={cal.certificado_url} target="_blank" rel="noreferrer" className={styles.certLink}>Ver →</a>
-                        : <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>—</span>
-                      }
-                    </td>
-                  </tr>
-                )
-              })}
-              {calibracoesFiltradas.length === 0 && (
-                <tr>
-                  <td colSpan={6} className={styles.emptyCell}>
-                    <EmptyState
-                      variant={calibracoes.length === 0 ? 'positive' : 'neutral'}
-                      icon="◎"
-                      title={
-                        calibracoes.length === 0
-                          ? 'Ainda não existem calibrações registadas.'
-                          : 'Sem resultados para os filtros atuais.'
-                      }
-                      subtitle={
-                        calibracoes.length === 0
-                          ? 'Comece por registar a primeira calibração.'
-                          : 'Tente outro termo ou mude a urgência.'
-                      }
-                      buttonText={calibracoes.length === 0 ? '+ Registar Calibração' : 'Limpar filtros'}
-                      onButtonClick={() => {
-                        if (calibracoes.length === 0) setModal(true)
-                        else {
-                          setPesquisa('')
-                          setFiltroUrgencia('todas')
-                        }
-                      }}
-                    />
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      {!loadingPage && (
+        <ResourceTable
+          columns={[ '#', 'Equipamento', 'Data Realizada', 'Próxima Calibração', 'Dias Restantes', 'Certificado' ]}
+          items={calibracoesFiltradas}
+          renderRow={renderRow}
+          loading={false}
+          emptyNode={(
+            <EmptyState
+              variant={calibracoes.length === 0 ? 'positive' : 'neutral'}
+              icon="◎"
+              title={
+                calibracoes.length === 0
+                  ? 'Ainda não existem calibrações registadas.'
+                  : 'Sem resultados para os filtros atuais.'
+              }
+              subtitle={
+                calibracoes.length === 0
+                  ? 'Comece por registar a primeira calibração.'
+                  : 'Tente outro termo ou mude a urgência.'
+              }
+              buttonText={calibracoes.length === 0 ? '+ Registar Calibração' : 'Limpar filtros'}
+              onButtonClick={() => {
+                if (calibracoes.length === 0) setModal(true)
+                else {
+                  setPesquisa('')
+                  setFiltroUrgencia('todas')
+                }
+              }}
+            />
+          )}
+          wrapperClass={styles.tableWrap}
+          tableClass={styles.table}
+        />
       )}
 
       {/* Modal */}

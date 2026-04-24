@@ -1,11 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/index.js'
 import EmptyState from '../components/EmptyState.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import { downloadCsv } from '../utils/downloadCsv.js'
 import styles from './Avarias.module.css'
+import { useEquipamentos } from '../hooks/useEquipamentos.js'
+import StatusBadge from '../components/StatusBadge.jsx'
+import ResourceTable from '../components/ResourceTable.jsx'
 
+/**
+ * Página: Avarias
+ * - Lista avarias (filtráveis) e permite resolver uma avaria.
+ * - Exemplo de refactor: usa `useEquipamentos`, `StatusBadge` e `ResourceTable`.
+ */
 function fmt(dt) {
   if (!dt) return '—'
   return new Date(dt).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -13,8 +21,9 @@ function fmt(dt) {
 
 export default function Avarias() {
   const toast = useToast()
+  const { map: equipamentos, loading: eqLoading } = useEquipamentos()
+
   const [avarias, setAvarias] = useState([])
-  const [equipamentos, setEquipamentos] = useState({})
   const [loading, setLoading] = useState(true)
   const [filtro, setFiltro] = useState('abertas') // 'abertas' | 'resolvidas' | 'todas'
   const [pesquisa, setPesquisa] = useState('')
@@ -25,26 +34,20 @@ export default function Avarias() {
   const [saving, setSaving] = useState(false)
   const [sucesso, setSucesso] = useState('')
 
-  const carregar = async () => {
+  const carregar = useCallback(async () => {
     setLoading(true)
     try {
       const resolvida = filtro === 'abertas' ? false : filtro === 'resolvidas' ? true : undefined
-      const [av, eqs] = await Promise.all([
-        api.listarTodasAvarias(resolvida),
-        api.listarEquipamentos(),
-      ])
+      const av = await api.listarTodasAvarias(resolvida)
       setAvarias(av)
-      const map = {}
-      eqs.forEach(e => { map[e.id] = e })
-      setEquipamentos(map)
     } catch (e) {
       toast.error(`Falha ao carregar avarias: ${e.message}`)
     } finally {
       setLoading(false)
     }
-  }
+  }, [filtro, toast])
 
-  useEffect(() => { carregar() }, [filtro])
+  useEffect(() => { carregar() }, [carregar])
 
   const navigate = useNavigate()
   const pesquisaLower = pesquisa.trim().toLowerCase()
@@ -67,14 +70,14 @@ export default function Avarias() {
     })
   }, [avarias, equipamentos, pesquisaLower])
 
-  const fmtCsv = (dt) => {
+  const fmtCsv = useCallback((dt) => {
     if (!dt) return ''
     const d = new Date(dt)
     if (Number.isNaN(d.getTime())) return ''
     return d.toISOString().slice(0, 19).replace('T', ' ')
-  }
+  }, [])
 
-  const handleExport = () => {
+  const handleExport = useCallback(() => {
     if (!avariasFiltradas || avariasFiltradas.length === 0) return
 
     const filename = `avarias-${new Date().toISOString().slice(0, 10)}.csv`
@@ -103,9 +106,10 @@ export default function Avarias() {
         { key: 'data_resolucao', header: 'Data Resolução' },
       ],
     })
-  }
+  }, [avariasFiltradas, equipamentos, fmtCsv])
 
-  const handleResolver = async () => {
+  const handleResolver = useCallback(async () => {
+    if (!modal) return
     setSaving(true)
     try {
       await api.resolverAvaria(modal.id, notas)
@@ -117,10 +121,39 @@ export default function Avarias() {
     } finally {
       setSaving(false)
     }
-  }
+  }, [modal, notas, carregar, toast])
 
   const abertas   = avarias.filter(a => !a.resolvida).length
   const resolvidas = avarias.filter(a => a.resolvida).length
+
+  const loadingPage = loading || eqLoading
+
+  const renderRow = useCallback((av) => {
+    const eq = equipamentos[av.equipamento_id]
+    return (
+      <tr key={av.id} className={av.resolvida ? styles.rowResolvida : styles.rowAberta}>
+        <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(av.id).padStart(3,'0')}</td>
+        <td>
+          {eq ? (
+            <Link to={`/equipamentos/${eq.id}`} className={styles.eqLink}>{eq.nome}</Link>
+          ) : `EQ-${av.equipamento_id}`}
+        </td>
+        <td className={styles.descricao}>{av.descricao}</td>
+        <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(av.data_registo)}</td>
+        <td>
+          <StatusBadge variant={av.resolvida ? 'ok' : 'nok'}>{av.resolvida ? 'Resolvida' : 'Aberta'}</StatusBadge>
+        </td>
+        <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(av.data_resolucao)}</td>
+        <td>
+          {!av.resolvida && (
+            <button className={styles.btnResolver} onClick={() => { setModal(av); setNotas('') }}>
+              Resolver
+            </button>
+          )}
+        </td>
+      </tr>
+    )
+  }, [equipamentos])
 
   return (
     <div className="fade-up">
@@ -161,82 +194,38 @@ export default function Avarias() {
         </div>
       </div>
 
-      {loading && <div className={styles.empty}>A carregar…</div>}
+      {loadingPage && <div className={styles.empty}>A carregar…</div>}
 
-      {!loading && (
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Equipamento</th>
-                <th>Descrição</th>
-                <th>Data Registo</th>
-                <th>Estado</th>
-                <th>Data Resolução</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {avariasFiltradas.map(av => {
-                const eq = equipamentos[av.equipamento_id]
-                return (
-                  <tr key={av.id} className={av.resolvida ? styles.rowResolvida : styles.rowAberta}>
-                    <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(av.id).padStart(3,'0')}</td>
-                    <td>
-                      {eq ? (
-                        <Link to={`/equipamentos/${eq.id}`} className={styles.eqLink}>
-                          {eq.nome}
-                        </Link>
-                      ) : `EQ-${av.equipamento_id}`}
-                    </td>
-                    <td className={styles.descricao}>{av.descricao}</td>
-                    <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(av.data_registo)}</td>
-                    <td>
-                      {av.resolvida
-                        ? <span className="badge badge-ok">Resolvida</span>
-                        : <span className="badge badge-nok">Aberta</span>
-                      }
-                    </td>
-                    <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(av.data_resolucao)}</td>
-                    <td>
-                      {!av.resolvida && (
-                        <button className={styles.btnResolver} onClick={() => { setModal(av); setNotas('') }}>
-                          Resolver
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-              {avariasFiltradas.length === 0 && (
-                <tr>
-                  <td colSpan={7} className={styles.emptyCell}>
-                    <EmptyState
-                      variant={avarias.length === 0 ? 'positive' : 'neutral'}
-                      icon="◎"
-                      title={
-                        avarias.length === 0
-                          ? 'Ainda não existem avarias registadas.'
-                          : 'Nenhuma avaria corresponde à pesquisa.'
-                      }
-                      subtitle={
-                        avarias.length === 0
-                          ? 'Quando houver uma avaria, ela aparecerá aqui.'
-                          : 'Tente outro termo ou limpe a pesquisa.'
-                      }
-                      buttonText={avarias.length === 0 ? 'Ver Equipamentos' : 'Limpar pesquisa'}
-                      onButtonClick={() => {
-                        if (avarias.length === 0) navigate('/equipamentos')
-                        else setPesquisa('')
-                      }}
-                    />
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      {!loadingPage && (
+        <ResourceTable
+          columns={[ '#', 'Equipamento', 'Descrição', 'Data Registo', 'Estado', 'Data Resolução' ]}
+          items={avariasFiltradas}
+          renderRow={renderRow}
+          loading={false}
+          emptyNode={(
+            <EmptyState
+              variant={avarias.length === 0 ? 'positive' : 'neutral'}
+              icon="◎"
+              title={
+                avarias.length === 0
+                  ? 'Ainda não existem avarias registadas.'
+                  : 'Nenhuma avaria corresponde à pesquisa.'
+              }
+              subtitle={
+                avarias.length === 0
+                  ? 'Quando houver uma avaria, ela aparecerá aqui.'
+                  : 'Tente outro termo ou limpe a pesquisa.'
+              }
+              buttonText={avarias.length === 0 ? 'Ver Equipamentos' : 'Limpar pesquisa'}
+              onButtonClick={() => {
+                if (avarias.length === 0) navigate('/equipamentos')
+                else setPesquisa('')
+              }}
+            />
+          )}
+          wrapperClass={styles.tableWrap}
+          tableClass={styles.table}
+        />
       )}
 
       {/* Modal Resolver */}
