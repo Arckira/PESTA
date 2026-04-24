@@ -80,19 +80,10 @@ class PrioridadeAvaria(str, Enum):
 
 
 class Equipamento(SQLModel, table=True):
-    """Representa um ativo fisico gerido pelo laboratorio.
-
-    Notes:
-        O equipamento e o pivot central do dominio. A maioria das entidades
-        historicas depende desta tabela para garantir rastreabilidade
-        operacional, tecnica e documental.
-    """
-
     __tablename__ = "Equipamentos"
     __table_args__ = (
         Index("ix_equipamento_nome_localizacao", "nome", "localizacao"),
     )
-
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(sa_column=Column("nome", String(150), nullable=False, index=True))
     tipo: str = Field(sa_column=Column("tipo", String(120), nullable=False, index=True))
@@ -106,9 +97,11 @@ class Equipamento(SQLModel, table=True):
         default=None,
         sa_column=Column("numero_serie", String(100), index=True),
     )
+    # Limites Operacionais
     temp_min: Optional[float] = Field(default=None, sa_column=Column("temp_min", Float))
     temp_max: Optional[float] = Field(default=None, sa_column=Column("temp_max", Float))
     humidade_max: Optional[float] = Field(default=None, sa_column=Column("humidade_max", Float))
+    
     fabricante: Optional[str] = Field(default=None, sa_column=Column(String(120), index=True))
     modelo: Optional[str] = Field(default=None, sa_column=Column(String(120), index=True))
     ano_fabrico: Optional[int] = Field(default=None)
@@ -199,18 +192,31 @@ class Avaria(SQLModel, table=True):
     equipamento_id: int = Field(foreign_key="Equipamentos.id", index=True)
     reportado_por_id: Optional[int] = Field(default=None, foreign_key="Utilizadores.id", index=True)
     descricao: str = Field(sa_column=Column("descricao", String, nullable=False))
-    prioridade: PrioridadeAvaria = Field(
-        default=PrioridadeAvaria.MEDIA,
-        sa_column=Column(String(20), nullable=False, index=True),
-    )
     data_registo: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False, index=True))
     resolvida: bool = Field(default=False, index=True)
     data_resolucao: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True))
     notas_resolucao: Optional[str] = Field(default=None)
-
     equipamento: Optional[Equipamento] = Relationship(back_populates="avarias")
     reportado_por: Optional[Utilizador] = Relationship(back_populates="avarias_reportadas")
+    custo_reparacao: Optional[float] = Field(default=None, sa_column=Column(Float))
+    num_sc_po: Optional[str] = Field(
+        default=None, 
+        sa_column=Column(String(100), index=True)
+    )
 
+    empresa_externa: Optional[str] = Field(default=None, sa_column=Column(String(100), index=True))
+    # Número do relatório deixado pelo técnico externo
+    num_relatorio_tecnico: Optional[str] = Field(default=None, sa_column=Column(String(50)))
+    # Validade da garantia da própria reparação
+    garantia_ate: Optional[datetime] = Field(default=None, sa_column=Column(DateTime))
+    # O campo diagnóstico continua a ser importante para o vosso histórico interno
+    # Prioridade da avaria (baixa/média/alta/critica)
+    prioridade: PrioridadeAvaria = Field(
+        default=PrioridadeAvaria.MEDIA,
+        sa_column=Column(String(20), nullable=False, index=True),
+    )
+
+    diagnostico: Optional[str] = Field(default=None)
 
 class Manutencao(SQLModel, table=True):
     """Historico de manutencao preventiva ou corretiva."""
