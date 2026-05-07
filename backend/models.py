@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, DateTime, Index, String, Float, event, update
+from sqlalchemy import Column, DateTime, Index, String, Float, Integer, ForeignKey, event, update, insert as sa_insert, inspect as sa_inspect
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -45,13 +45,32 @@ def calcular_proxima_data(
 
 
 class EstadoEquipamento(str, Enum):
-    """Estados operacionais possiveis para um equipamento."""
+    """Estados operacionais unificados para clarificar a operação na Industrial Testing Lab."""
 
     DISPONIVEL = "Disponível"
     OCUPADO = "Ocupado"
     AVARIADO = "Avariado"
     MANUTENCAO = "Em manutenção"
     CALIBRACAO = "Em calibração"
+
+
+def normalizar_estado_equipamento(estado: Optional[str]) -> str:
+    """Converte estados legados para os nomes canónicos do sistema.
+
+    Porque: a base de dados pode ainda conter valores antigos; normalizar
+    aqui evita ruído na UI e mantém a lógica operacional consistente durante
+    a migração.
+    """
+
+    if estado is None:
+        return EstadoEquipamento.DISPONIVEL.value
+
+    texto = str(estado).strip()
+    legado = {
+        "nok": EstadoEquipamento.AVARIADO.value,
+        "em funcionamento": EstadoEquipamento.DISPONIVEL.value,
+    }
+    return legado.get(texto.lower(), texto)
 
 
 class RoleUtilizador(str, Enum):
@@ -70,14 +89,6 @@ class TipoDocumento(str, Enum):
     OUTRO = "outro"
 
 
-class PrioridadeAvaria(str, Enum):
-    """Niveis de severidade para apoiar triagem e SLA."""
-
-    BAIXA = "Baixa"
-    MEDIA = "Media"
-    ALTA = "Alta"
-    CRITICA = "Critica"
-
 
 class Equipamento(SQLModel, table=True):
     __tablename__ = "Equipamentos"
@@ -85,6 +96,10 @@ class Equipamento(SQLModel, table=True):
         Index("ix_equipamento_nome_localizacao", "nome", "localizacao"),
     )
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Nota (PT-PT): Os nomes dos campos (ex.: temp_min, largura_mm,
+    # voltagem_v) são usados directamente pela UI. Mantê-los
+    # consistentes garante que os objetos enviados pelo cliente
+    # correspondem à estrutura persistida na base de dados.
     nome: str = Field(sa_column=Column("nome", String(150), nullable=False, index=True))
     tipo: str = Field(sa_column=Column("tipo", String(120), nullable=False, index=True))
     localizacao: str = Field(
@@ -105,6 +120,10 @@ class Equipamento(SQLModel, table=True):
     fabricante: Optional[str] = Field(default=None, sa_column=Column(String(120), index=True))
     modelo: Optional[str] = Field(default=None, sa_column=Column(String(120), index=True))
     ano_fabrico: Optional[int] = Field(default=None)
+    largura_mm: Optional[float] = Field(default=None)
+    altura_mm: Optional[float] = Field(default=None)
+    profundidade_mm: Optional[float] = Field(default=None)
+    volume_l: Optional[float] = Field(default=None)
     potencia_kw: Optional[float] = Field(default=None)
     ligacao_eletrica: Optional[str] = Field(default=None, sa_column=Column(String(80)))
     corrente_a: Optional[float] = Field(default=None)
@@ -113,8 +132,8 @@ class Equipamento(SQLModel, table=True):
     peso_max_kg: Optional[float] = Field(default=None)
     notas_tecnicas: Optional[str] = Field(default=None)
     # Armazenamos o estado como string no modelo para garantir que
-    # valores vindos de clientes (ex.: 'Ocupado') são aceites sem
-    # validação estrita por Enum no Pydantic/SQLModel.
+    # valores vindos de clientes (ex.: 'Ocupado') e dados legados são aceites
+    # sem validação estrita por Enum no Pydantic/SQLModel.
     estado_atual: str = Field(
         default=EstadoEquipamento.DISPONIVEL.value,
         sa_column=Column(String(30), nullable=False, index=True),
@@ -173,6 +192,7 @@ class Utilizador(SQLModel, table=True):
 
     reservas: list["Reserva"] = Relationship(back_populates="utilizador_rel")
     sessoes: list["SessaoUso"] = Relationship(back_populates="utilizador_rel")
+    sessoes_auth: list["SessaoAuth"] = Relationship(back_populates="utilizador")
     avarias_reportadas: list["Avaria"] = Relationship(back_populates="reportado_por")
     manutencoes_executadas: list["Manutencao"] = Relationship(back_populates="executado_por")
     calibracoes_executadas: list["Calibracao"] = Relationship(back_populates="executado_por")
@@ -180,43 +200,32 @@ class Utilizador(SQLModel, table=True):
 
 
 class Avaria(SQLModel, table=True):
-    """Regista falhas e o respetivo ciclo de vida tecnico."""
+    """Registo de avaria de um equipamento.
+
+    Campos de custo, reparação externa e diagnóstico foram removidos para
+    um módulo de Manutenção dedicado. Este modelo mantém apenas a rastreabilidade
+    operacional essencial (quando, quem, resolvida ou não).
+    """
 
     __tablename__ = "Avarias"
     __table_args__ = (
         Index("ix_avaria_equipamento_resolvida", "equipamento_id", "resolvida"),
-        Index("ix_avaria_data_prioridade", "data_registo", "prioridade"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     equipamento_id: int = Field(foreign_key="Equipamentos.id", index=True)
-    reportado_por_id: Optional[int] = Field(default=None, foreign_key="Utilizadores.id", index=True)
+    utilizador_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column("utilizador_id", Integer, ForeignKey("Utilizadores.id"), nullable=True, index=True),
+    )
     descricao: str = Field(sa_column=Column("descricao", String, nullable=False))
     data_registo: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False, index=True))
     resolvida: bool = Field(default=False, index=True)
     data_resolucao: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True))
     notas_resolucao: Optional[str] = Field(default=None)
+
     equipamento: Optional[Equipamento] = Relationship(back_populates="avarias")
     reportado_por: Optional[Utilizador] = Relationship(back_populates="avarias_reportadas")
-    custo_reparacao: Optional[float] = Field(default=None, sa_column=Column(Float))
-    num_sc_po: Optional[str] = Field(
-        default=None, 
-        sa_column=Column(String(100), index=True)
-    )
-
-    empresa_externa: Optional[str] = Field(default=None, sa_column=Column(String(100), index=True))
-    # Número do relatório deixado pelo técnico externo
-    num_relatorio_tecnico: Optional[str] = Field(default=None, sa_column=Column(String(50)))
-    # Validade da garantia da própria reparação
-    garantia_ate: Optional[datetime] = Field(default=None, sa_column=Column(DateTime))
-    # O campo diagnóstico continua a ser importante para o vosso histórico interno
-    # Prioridade da avaria (baixa/média/alta/critica)
-    prioridade: PrioridadeAvaria = Field(
-        default=PrioridadeAvaria.MEDIA,
-        sa_column=Column(String(20), nullable=False, index=True),
-    )
-
-    diagnostico: Optional[str] = Field(default=None)
 
 class Manutencao(SQLModel, table=True):
     """Historico de manutencao preventiva ou corretiva."""
@@ -304,8 +313,17 @@ class Reserva(SQLModel, table=True):
     equipamento_id: int = Field(foreign_key="Equipamentos.id", index=True)
     utilizador_id: int = Field(foreign_key="Utilizadores.id", index=True)
     projeto: Optional[str] = Field(default=None, sa_column=Column(String(150), index=True))
+    # Porque: o método de ensaio liga a reserva à norma/protocolo usado no laboratório
+    # e melhora a rastreabilidade documental e técnica.
+    metodo: Optional[str] = Field(default=None, sa_column=Column(String(180), index=True))
     data_inicio: datetime = Field(sa_column=Column(DateTime, nullable=False, index=True))
     data_fim: datetime = Field(sa_column=Column(DateTime, nullable=False, index=True))
+    # Duração estimada do ensaio em minutos (preenchida quando inicia o check-in)
+    duracao_prevista_minutos: Optional[int] = Field(default=None, sa_column=Column("duracao_prevista_minutos", nullable=True, index=True))
+    # Indica se o ensaio foi concluído com sucesso (usado para cálculo de OEE)
+    concluido_com_sucesso: Optional[bool] = Field(default=None, sa_column=Column("concluido_com_sucesso", nullable=True, index=True))
+    # Data/hora de conclusão automática (calculada como data_inicio + duracao_prevista_minutos)
+    fim_automatico: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True, index=True))
     notas: Optional[str] = Field(default=None)
     criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False))
 
@@ -330,10 +348,83 @@ class SessaoUso(SQLModel, table=True):
     utilizador: str = Field(sa_column=Column("utilizador", String(150), nullable=False))
     inicio: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False, index=True))
     fim: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True))
+    duracao_prevista_minutos: Optional[int] = Field(default=None)
+    fim_automatico: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True))
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="sessoes")
     reserva: Optional[Reserva] = Relationship(back_populates="sessoes")
     utilizador_rel: Optional[Utilizador] = Relationship(back_populates="sessoes")
+
+
+class SessaoAuth(SQLModel, table=True):
+    """Sessão de autenticação com persistência em base de dados.
+
+    Garante que as sessões são resilientes a reinícios de servidor, permitindo
+    auditoria centralizada de acesso ao sistema e invalidação de sessões quando
+    o utilizador é desativado.
+
+    Atributos:
+        token: Identificador único da sessão (chave primária).
+        utilizador_id: Referência ao utilizador proprietário da sessão.
+        role: Papel do utilizador no momento de autenticação (cópia para eficiência).
+        expira_em: Data/hora de expiração da sessão.
+        criado_em: Data/hora de criação da sessão.
+    """
+
+    __tablename__ = "SessoesAuth"
+    __table_args__ = (
+        Index("ix_sessaoauth_utilizador_expira", "utilizador_id", "expira_em"),
+    )
+
+    token: str = Field(
+        primary_key=True,
+        max_length=255,
+    )
+    utilizador_id: int = Field(
+        foreign_key="Utilizadores.id",
+        index=True,
+    )
+    role: RoleUtilizador = Field(
+        sa_column=Column(String(20), nullable=False),
+    )
+    expira_em: datetime = Field(
+        sa_column=Column(DateTime, nullable=False, index=True),
+    )
+    criado_em: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(DateTime, nullable=False),
+    )
+
+    utilizador: Optional[Utilizador] = Relationship(back_populates="sessoes_auth")
+
+
+class Log(SQLModel, table=True):
+    """Registo persistente de auditoria de acções de utilizadores e administradores.
+
+    Porque: a rastreabilidade é um requisito industrial crítico. Persistir logs na BD
+    garante que o histórico de acções sobrevive a reinícios de servidor e permite
+    auditorias forenses sem depender de logs de aplicação voláteis em memória.
+    """
+
+    __tablename__ = "Logs"
+    __table_args__ = (
+        Index("ix_log_utilizador_criado", "utilizador_id", "criado_em"),
+        Index("ix_log_acao_criado", "acao", "criado_em"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    utilizador_id: Optional[int] = Field(default=None, foreign_key="Utilizadores.id", index=True)
+    utilizador_nome: Optional[str] = Field(default=None, sa_column=Column(String(150)))
+    role: Optional[str] = Field(default=None, sa_column=Column(String(20)))
+    acao: str = Field(sa_column=Column("acao", String(100), nullable=False, index=True))
+    entidade: Optional[str] = Field(default=None, sa_column=Column(String(100)))
+    entidade_id: Optional[int] = Field(default=None)
+    detalhe: Optional[str] = Field(default=None)
+    sucesso: bool = Field(default=True, index=True)
+    criado_em: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(DateTime, nullable=False, index=True),
+    )
 
 
 @event.listens_for(Equipamento, "before_update")
@@ -346,6 +437,15 @@ def sincronizar_timestamp_equipamento(mapper, connection, target) -> None:
 
     del mapper, connection
     target.atualizado_em = utc_now()
+
+
+@event.listens_for(Equipamento, "before_insert")
+@event.listens_for(Equipamento, "before_update")
+def normalizar_estado_equipamento_model(mapper, connection, target) -> None:
+    """Normaliza estados antigos antes de persistir o equipamento."""
+
+    del mapper, connection
+    target.estado_atual = normalizar_estado_equipamento(target.estado_atual)
 
 
 @event.listens_for(Manutencao, "before_insert")
@@ -375,8 +475,8 @@ def calcular_proxima_data_calibracao(mapper, connection, target) -> None:
 
 
 @event.listens_for(Avaria, "after_insert")
-def marcar_equipamento_como_nok(mapper, connection, target) -> None:
-    """Forca o estado do equipamento para Avariado apos registo de avaria.
+def marcar_equipamento_como_avariado(mapper, connection, target) -> None:
+    """Força o estado do equipamento para Avariado após registo de avaria.
 
     Porque: a atualizacao no proprio evento ORM garante consistencia mesmo
     quando a avaria e criada por script, API ou futuras tarefas agendadas.
@@ -391,3 +491,91 @@ def marcar_equipamento_como_nok(mapper, connection, target) -> None:
             atualizado_em=utc_now(),
         )
     )
+
+
+@event.listens_for(Reserva, "after_insert")
+def marcar_equipamento_como_ocupado_por_reserva(mapper, connection, target) -> None:
+    """Força o estado do equipamento para Ocupado quando a reserva é criada."""
+
+    del mapper
+    connection.execute(
+        update(Equipamento)
+        .where(Equipamento.id == target.equipamento_id)
+        .values(
+            estado_atual=EstadoEquipamento.OCUPADO.value,
+            atualizado_em=utc_now(),
+        )
+    )
+
+
+@event.listens_for(SessaoUso, "after_insert")
+def marcar_equipamento_como_ocupado_por_ensaio(mapper, connection, target) -> None:
+    """Força o estado do equipamento para Ocupado quando o ensaio começa."""
+
+    del mapper
+    connection.execute(
+        update(Equipamento)
+        .where(Equipamento.id == target.equipamento_id)
+        .values(
+            estado_atual=EstadoEquipamento.OCUPADO.value,
+            atualizado_em=utc_now(),
+        )
+    )
+
+
+@event.listens_for(Equipamento, "after_update")
+def criar_avaria_se_transitou_para_avariado(mapper, connection, target) -> None:
+    """Cria automaticamente registo de Avaria quando o estado passa para 'Avariado'.
+
+    Porque: assegura rastreabilidade industrial — qualquer transição para
+    'Avariado' é capturada como um registo de avaria sem depender apenas da
+    ação do utilizador noutras interfaces. Evita duplicados verificando a
+    transição efetiva (antigo != novo).
+    """
+
+    del mapper
+    try:
+        hist = sa_inspect(target).attrs.estado_atual.history
+        antigo = hist.deleted[0] if hist.deleted else None
+        novo = hist.added[0] if hist.added else getattr(target, 'estado_atual', None)
+    except Exception:
+        antigo = None
+        novo = getattr(target, 'estado_atual', None)
+
+    antigo_norm = normalizar_estado_equipamento(antigo)
+    novo_norm = normalizar_estado_equipamento(novo)
+
+    # Criar AVARIA apenas quando houver uma transição para 'Avariado'
+    if novo_norm == EstadoEquipamento.AVARIADO.value and antigo_norm != EstadoEquipamento.AVARIADO.value:
+        # Se já foi registada manualmente uma avaria nesta mesma transação, não duplicar
+        if getattr(target, "_avaria_manual_registada", False):
+            return
+        
+        # Se o código que iniciou a alteração definiu uma descrição customizada
+        # no objecto (ex: atributo privado `_avaria_descricao`), usa-a.
+        descricao = getattr(target, "_avaria_descricao", None) or "Avaria detetada via alteração de estado"
+
+        # Verificar se já existe uma avaria aberta para este equipamento
+        try:
+            consulta = Avaria.__table__.select().where(
+                Avaria.__table__.c.equipamento_id == target.id,
+                Avaria.__table__.c.resolvida == False,
+            )
+            existente = connection.execute(consulta).first()
+        except Exception:
+            existente = None
+
+        if existente:
+            # Já existe uma avaria aberta — não criar duplicado.
+            return
+
+        # Inserção direta via connection para garantir que a operação faz parte
+        # da mesma transacção SQL em curso (se suportado pelo engine).
+        connection.execute(
+            Avaria.__table__.insert().values(
+                equipamento_id=target.id,
+                descricao=descricao,
+                data_registo=utc_now(),
+                resolvida=False,
+            )
+        )

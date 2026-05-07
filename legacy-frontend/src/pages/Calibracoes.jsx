@@ -197,7 +197,7 @@ export default function Calibracoes() {
         <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(cal.proxima_data)}</td>
         <td>
           {dias !== null ? (
-            <StatusBadge variant={vencida ? 'nok' : urgente ? 'ocupado' : 'ok'}>
+            <StatusBadge variant={vencida ? 'danger' : urgente ? 'occupied' : 'success'}>
               {vencida
                 ? `Vencida há ${Math.abs(dias)}d`
                 : urgente

@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { api } from '../api/index.js'
 import { useAuth } from '../contexts/AuthContext.jsx'
+import { getPostLoginPath, LOGIN_PATH, PUBLIC_FALLBACK_PATH } from '../contexts/authNavigation.js'
 import { useToast } from './ToastProvider.jsx'
 import styles from './LoginModal.module.css'
 
 export default function LoginModal() {
   const toast = useToast()
-  const { login, lastUserId, user, alterarPin, promptOpen, promptMode, closeAuthPrompt, openBootstrapPrompt } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { login, lastUserId, user, alterarPin, promptOpen, promptMode, redirectPath, setRedirectPath, closeAuthPrompt, openBootstrapPrompt } = useAuth()
   const [utilizadores, setUtilizadores] = useState([])
   const [carregarLista, setCarregarLista] = useState(true)
   const [userId, setUserId] = useState('')
@@ -21,6 +25,7 @@ export default function LoginModal() {
   const [bootstrapDepartamento, setBootstrapDepartamento] = useState('')
   const [bootstrapPin, setBootstrapPin] = useState('')
   const [bootstrapSucesso, setBootstrapSucesso] = useState(false)
+  const isLoginRoute = location.pathname === LOGIN_PATH
 
   useEffect(() => {
     if (promptMode === 'bootstrap-admin') {
@@ -41,7 +46,7 @@ export default function LoginModal() {
         setErro(e.message)
       })
       .finally(() => setCarregarLista(false))
-  }, [lastUserId])
+  }, [lastUserId, promptMode])
 
   useEffect(() => {
     if (promptMode === 'change-pin' || user?.forcar_troca_pin) {
@@ -78,16 +83,22 @@ export default function LoginModal() {
       return
     }
     if (!/^\d{4}$/.test(pin)) {
-      setErro('PIN deve ter 4 dígitos.')
+      setErro('PIN deve ter 4 digitos.')
       return
     }
 
     setSubmitting(true)
     setErro('')
     try {
-      await login({ userId: Number(userId), pin })
+      const data = await login({ userId: Number(userId), pin })
       setPin('')
-      toast.success('Sessão iniciada com sucesso.')
+      toast.success('Sessao iniciada com sucesso.')
+      if (!data.utilizador.forcar_troca_pin) {
+        // Se veio de scan QR ou de página protegida, redirecionar para esse destino
+        const destino = redirectPath || getPostLoginPath(data.utilizador)
+        if (redirectPath) setRedirectPath(null)
+        navigate(destino, { replace: true })
+      }
     } catch (e2) {
       setErro(e2.message)
       toast.error(e2.message || 'Falha no login.')
@@ -99,7 +110,7 @@ export default function LoginModal() {
   const handleTrocaPin = async (e) => {
     e.preventDefault()
     if (!/^\d{4}$/.test(pinAtual) || !/^\d{4}$/.test(pinNovo)) {
-      setErro('PIN atual e novo PIN devem ter 4 dígitos.')
+      setErro('PIN atual e novo PIN devem ter 4 digitos.')
       return
     }
     if (pinAtual === pinNovo) {
@@ -115,9 +126,10 @@ export default function LoginModal() {
       setPinAtual('')
       setPinNovo('')
       toast.success('PIN alterado com sucesso.')
+      navigate(getPostLoginPath({ ...user, forcar_troca_pin: false }), { replace: true })
     } catch (e2) {
       setErro(e2.message)
-      toast.error(e2.message || 'Não foi possível alterar o PIN.')
+      toast.error(e2.message || 'Nao foi possivel alterar o PIN.')
     } finally {
       setSubmitting(false)
     }
@@ -126,11 +138,11 @@ export default function LoginModal() {
   const handleBootstrapAdmin = async (e) => {
     e.preventDefault()
     if (!bootstrapNome || !bootstrapNumero || !bootstrapDepartamento) {
-      setErro('Preenche nome, número de colaborador e departamento.')
+      setErro('Preenche nome, numero de colaborador e departamento.')
       return
     }
     if (!/^\d{4}$/.test(bootstrapPin)) {
-      setErro('O PIN inicial deve ter 4 dígitos.')
+      setErro('O PIN inicial deve ter 4 digitos.')
       return
     }
 
@@ -144,17 +156,20 @@ export default function LoginModal() {
         pin: bootstrapPin,
       })
       setBootstrapSucesso(true)
-      await login({ userId: resposta.utilizador_id, pin: bootstrapPin })
-      toast.success('Administrador inicial criado e sessão iniciada.')
+      const data = await login({ userId: resposta.utilizador_id, pin: bootstrapPin })
+      toast.success('Administrador inicial criado e sessao iniciada.')
+      if (!data.utilizador.forcar_troca_pin) {
+        navigate(getPostLoginPath(data.utilizador), { replace: true })
+      }
     } catch (e2) {
       setErro(e2.message)
-      toast.error(e2.message || 'Não foi possível criar o administrador.')
+      toast.error(e2.message || 'Nao foi possivel criar o administrador.')
     } finally {
       setSubmitting(false)
     }
   }
 
-  if (!promptOpen && !trocaPin) {
+  if (!promptOpen && !trocaPin && !(isLoginRoute && !user)) {
     return null
   }
 
@@ -162,9 +177,9 @@ export default function LoginModal() {
     return (
       <div className={styles.overlay}>
         <div className={styles.modal}>
-          <div className="label">Primeira configuração</div>
+          <div className="label">Primeira configuracao</div>
           <h1 className={styles.title}>Criar administrador da empresa</h1>
-          <p className={styles.helper}>Ainda não existe nenhum administrador. Cria o primeiro utilizador com permissões totais.</p>
+          <p className={styles.helper}>Ainda nao existe nenhum administrador. Cria o primeiro utilizador com permissoes totais.</p>
 
           <form className={styles.form} onSubmit={handleBootstrapAdmin}>
             <label className={styles.field}>
@@ -210,7 +225,7 @@ export default function LoginModal() {
     return (
       <div className={styles.overlay}>
         <div className={styles.modal}>
-          <div className="label">Autenticação</div>
+          <div className="label">Autenticacao</div>
           <h1 className={styles.title}>Entrar no sistema</h1>
           {carregarLista ? (
             <p className={styles.loading}>A carregar utilizadores...</p>
@@ -243,7 +258,7 @@ export default function LoginModal() {
 
               {utilizadores.length === 0 && (
                 <div className={styles.helper}>
-                  Ainda não há utilizadores configurados. Usa a primeira configuração para criar o administrador.
+                  Ainda nao ha utilizadores configurados. Usa a primeira configuracao para criar o administrador.
                 </div>
               )}
 
@@ -251,15 +266,24 @@ export default function LoginModal() {
 
               {utilizadores.length === 0 && (
                 <button className={styles.secondary} type="button" onClick={openBootstrapPrompt}>
-                  Ir para primeira configuração
+                  Ir para primeira configuracao
                 </button>
               )}
 
               <button className={styles.primary} type="submit" disabled={submitting}>
                 {submitting ? 'A entrar...' : 'Entrar'}
               </button>
-              <button className={styles.secondary} type="button" onClick={closeAuthPrompt}>
-                Cancelar
+
+              <button
+                className={styles.ghost}
+                type="button"
+                onClick={() => {
+                  closeAuthPrompt()
+                  navigate(PUBLIC_FALLBACK_PATH, { replace: isLoginRoute })
+                }}
+              >
+                <span>Acesso de manutencao</span>
+                <span className={styles.ghostSub}>Avarias · Manutencoes · Calibracoes - sem PIN</span>
               </button>
             </form>
           )}

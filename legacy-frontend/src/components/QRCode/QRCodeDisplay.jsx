@@ -18,7 +18,7 @@ import styles from './QRCodeDisplay.module.css'
 export default function QRCodeDisplay({ equipamento }) {
   const canvasRef = useRef(null)
 
-  const url = `${QR_FRONTEND_BASE}/equipamentos/${equipamento.id}`
+  const url = `${QR_FRONTEND_BASE}/equipamentos/${equipamento.id}/reserva`
 
   const handlePrint = () => {
     const canvas = canvasRef.current?.querySelector('canvas')

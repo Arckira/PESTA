@@ -8,8 +8,18 @@ import React from 'react'
  * - renderRow: função (item) => <tr>...</tr>
  * - loading: boolean
  * - emptyNode: node a mostrar quando não há items
+ * - showTrailingHeader: boolean para renderizar a célula extra no cabeçalho/empty state
  */
-export default React.memo(function ResourceTable({ columns = [], items = [], renderRow, loading = false, emptyNode = null, wrapperClass = 'tableWrap', tableClass = 'table' }) {
+export default React.memo(function ResourceTable({
+  columns = [],
+  items = [],
+  renderRow,
+  loading = false,
+  emptyNode = null,
+  wrapperClass = 'tableWrap',
+  tableClass = 'table',
+  showTrailingHeader = true,
+}) {
   if (loading) return <div className="loading">A carregar…</div>
 
   return (
@@ -18,13 +28,13 @@ export default React.memo(function ResourceTable({ columns = [], items = [], ren
         <thead>
           <tr>
             {columns.map((c, i) => <th key={i}>{c}</th>)}
-            <th />
+            {showTrailingHeader && <th />}
           </tr>
         </thead>
         <tbody>
           {items && items.length > 0 ? items.map(renderRow) : (
             <tr>
-              <td colSpan={columns.length + 1} className="emptyCell">
+              <td colSpan={columns.length + (showTrailingHeader ? 1 : 0)} className="emptyCell">
                 {emptyNode}
               </td>
             </tr>

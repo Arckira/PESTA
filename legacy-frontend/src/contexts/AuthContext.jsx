@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api, setStoredToken } from '../api/index.js'
 import { setAuthPromptHandler } from './authBridge.js'
+import { PUBLIC_PATHS } from './authNavigation.js'
 
 const AuthContext = createContext(null)
 const SESSION_STORAGE_KEY = 'lab_auth_session'
@@ -26,6 +27,7 @@ export function AuthProvider({ children }) {
   const [bootstrapAvailable, setBootstrapAvailable] = useState(false)
   const [promptOpen, setPromptOpen] = useState(false)
   const [promptMode, setPromptMode] = useState('login')
+  const [redirectPath, setRedirectPath] = useState(null)
   const pendingPromptRef = useRef(null)
 
   const syncBootstrapStatus = async ({ abrirSetup = false } = {}) => {
@@ -33,25 +35,45 @@ export function AuthProvider({ children }) {
       const estado = await api.authBootstrapStatus()
       const disponivel = !estado.has_admin
       setBootstrapAvailable(disponivel)
-      if (abrirSetup && disponivel) {
-        setPromptMode('bootstrap-admin')
+      if (abrirSetup) {
+        // Sem admin → primeiro arranque; com admin → login normal
+        setPromptMode(disponivel ? 'bootstrap-admin' : 'login')
         setPromptOpen(true)
       }
     } catch {
       setBootstrapAvailable(false)
+      if (abrirSetup) {
+        // Falha de rede: abrir modal de login como fallback
+        setPromptMode('login')
+        setPromptOpen(true)
+      }
     }
   }
 
   useEffect(() => {
     const restored = readSession()
+
+    // Safety timeout: se as chamadas de rede ficarem pendentes (ex: MSSQL down
+    // / backend indisponível), garantir que a página não fica branca para sempre.
+    const startupTimer = setTimeout(() => {
+      // eslint-disable-next-line no-console
+      console.warn('Auth bootstrap timeout — forçando isLoading=false')
+      setIsLoading(false)
+    }, 15000)
+
     if (!restored || !restored.token || !restored.expira_em_epoch_ms) {
       clearSessionStorage()
-      syncBootstrapStatus({ abrirSetup: true }).finally(() => setIsLoading(false))
+      const isPublicPath = Array.from(PUBLIC_PATHS).some((p) => window.location.pathname.startsWith(p))
+      syncBootstrapStatus({ abrirSetup: !isPublicPath }).finally(() => {
+        clearTimeout(startupTimer)
+        setIsLoading(false)
+      })
       return
     }
 
     if (Date.now() >= restored.expira_em_epoch_ms) {
       clearSessionStorage()
+      clearTimeout(startupTimer)
       setIsLoading(false)
       return
     }
@@ -69,8 +91,10 @@ export function AuthProvider({ children }) {
         syncBootstrapStatus({ abrirSetup: true })
       })
       .finally(() => {
-        syncBootstrapStatus()
-        setIsLoading(false)
+        syncBootstrapStatus().finally(() => {
+          clearTimeout(startupTimer)
+          setIsLoading(false)
+        })
       })
   }, [])
 
@@ -135,7 +159,9 @@ export function AuthProvider({ children }) {
     } finally {
       clearSessionStorage()
       setSession(null)
-      syncBootstrapStatus({ abrirSetup: true })
+      // replace() elimina a entrada atual do histórico: o botão "voltar"
+      // do browser não permite regressar a páginas protegidas.
+      window.location.replace('/login')
     }
   }
 
@@ -155,6 +181,8 @@ export function AuthProvider({ children }) {
     bootstrapAvailable,
     promptOpen,
     promptMode,
+    redirectPath,
+    setRedirectPath,
     lastUserId: localStorage.getItem(LAST_USER_STORAGE_KEY),
     login,
     logout,
@@ -162,7 +190,7 @@ export function AuthProvider({ children }) {
     openAuthPrompt,
     openBootstrapPrompt,
     closeAuthPrompt,
-  }), [isLoading, session, promptOpen, promptMode, openAuthPrompt, openBootstrapPrompt, closeAuthPrompt])
+  }), [isLoading, session, promptOpen, promptMode, redirectPath, openAuthPrompt, openBootstrapPrompt, closeAuthPrompt])
 
   useEffect(() => {
     setAuthPromptHandler((mode = 'login') => openAuthPrompt(mode))

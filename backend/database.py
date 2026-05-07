@@ -1,7 +1,8 @@
-"""Configuracao da camada de acesso a dados.
+"""Configuracao da camada de acesso a dados — exclusiva SQL Server 2022 Express.
 
 O objetivo deste modulo e centralizar a criacao da engine SQLModel/SQLAlchemy
-e encapsular detalhes de ligacao ao SQL Server 2022 Express via ``pyodbc``.
+e encapsular detalhes de ligacao ao SQL Server via pyodbc.
+Migrações SQLite foram removidas: o projeto é exclusivo MSSQL.
 """
 
 from __future__ import annotations
@@ -19,15 +20,13 @@ from sqlmodel import SQLModel, Session, create_engine
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SQLITE_FILE = "testing_centre.db"
-DEFAULT_SQLITE_URL = f"sqlite:///{DEFAULT_SQLITE_FILE}"
 DEFAULT_MSSQL_DRIVER = "ODBC Driver 18 for SQL Server"
 
 
 def _load_dotenv_from_project_root() -> None:
     """Carrega variaveis de ambiente definidas em `.env` na raiz do projecto.
 
-    Não sobrescreve variáveis já presentes em `os.environ`.
+    Nao sobrescreve variaveis ja presentes em `os.environ`.
     """
 
     project_root = Path(__file__).resolve().parents[1]
@@ -46,17 +45,16 @@ def _load_dotenv_from_project_root() -> None:
                 key, val = line.split("=", 1)
                 key = key.strip()
                 val = val.strip()
-                if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                if (val.startswith('"') and val.endswith('"')) or (
+                    val.startswith("'") and val.endswith("'")
+                ):
                     val = val[1:-1]
                 if key and key not in os.environ:
                     os.environ[key] = val
     except Exception:
-        # Não falhar a importação do módulo se o .env tiver problemas;
-        # deixamos o resto do código tratar da ausência de configuração.
         pass
 
 
-# Carrega variáveis do .env da raiz do repositório (se existir)
 _load_dotenv_from_project_root()
 
 
@@ -66,11 +64,10 @@ def _obter_database_url() -> str:
     Returns:
         str: URL final para a engine SQLAlchemy.
 
-    Notes:
-        ``DATABASE_URL`` continua a ter prioridade total. Se nao existir,
-        tentamos construir uma ligacao MSSQL a partir de variaveis dedicadas.
-        Caso tambem nao estejam definidas, recuamos para SQLite local para
-        desenvolvimento rapido.
+    Raises:
+        ValueError: Se nenhuma configuracao MSSQL for encontrada.
+            Porque: arranques silenciosos com BD errada causam erros difíceis
+            de diagnosticar; falhar explicitamente é mais seguro.
     """
 
     database_url = os.getenv("DATABASE_URL", "").strip()
@@ -80,7 +77,10 @@ def _obter_database_url() -> str:
     mssql_server = os.getenv("MSSQL_SERVER", "").strip()
     mssql_database = os.getenv("MSSQL_DATABASE", "").strip()
     if not mssql_server or not mssql_database:
-        return DEFAULT_SQLITE_URL
+        raise ValueError(
+            "Configuracao MSSQL em falta. "
+            "Defina DATABASE_URL ou MSSQL_SERVER + MSSQL_DATABASE no ambiente (.env ou variavel de sistema)."
+        )
 
     mssql_user = os.getenv("MSSQL_USER", "").strip()
     mssql_password = os.getenv("MSSQL_PASSWORD", "").strip()
@@ -112,36 +112,25 @@ def _obter_database_url() -> str:
 
 
 DATABASE_URL = _obter_database_url()
-IS_SQLITE = DATABASE_URL.startswith("sqlite")
 IS_MSSQL = DATABASE_URL.startswith("mssql+pyodbc")
 
 
 def _criar_engine() -> Engine:
-    """Cria uma engine resiliente para o SGBD configurado.
+    """Cria uma engine para SQL Server.
 
     Returns:
         Engine: Engine pronta para uso pela aplicacao.
 
     Raises:
-        RuntimeError: Se a engine nao puder ser criada.
+        RuntimeError: Se a engine nao puder ser criada (falha de arranque irrecuperável).
     """
 
-    connect_args: dict[str, Any] = {}
-    if IS_SQLITE:
-        connect_args["check_same_thread"] = False
-
     try:
-        engine_kwargs = {
-            "connect_args": connect_args,
-            "pool_pre_ping": True,
-            "echo": os.getenv("SQL_ECHO", "false").strip().lower() == "true",
-        }
-        if IS_MSSQL:
-            engine_kwargs["pool_recycle"] = 1800
-
         return create_engine(
             DATABASE_URL,
-            **engine_kwargs,
+            pool_pre_ping=True,
+            pool_recycle=1800,
+            echo=os.getenv("SQL_ECHO", "false").strip().lower() == "true",
         )
     except SQLAlchemyError as exc:
         logger.exception("Falha ao criar a engine da base de dados")
@@ -151,147 +140,112 @@ def _criar_engine() -> Engine:
 engine = _criar_engine()
 
 
-def _colunas_tabela_sqlite(connection, tabela: str) -> set[str]:
-    """Obtém as colunas atuais de uma tabela SQLite.
+def _garantir_coluna_mssql(connection, tabela: str, coluna: str, definicao: str) -> None:
+    """Adiciona uma coluna em SQL Server apenas se ainda nao existir."""
 
-    Porque: o projeto já tinha uma base SQLite local com esquema antigo.
-    Esta introspeção permite migrar incrementalmente sem perder dados.
-    """
-
-    resultado = connection.exec_driver_sql(f"PRAGMA table_info({tabela})")
-    return {str(linha[1]) for linha in resultado}
-
-
-def _garantir_coluna_sqlite(connection, tabela: str, coluna: str, definicao: str) -> None:
-    """Adiciona uma coluna em SQLite apenas se ainda não existir."""
-
-    colunas = _colunas_tabela_sqlite(connection, tabela)
-    if coluna not in colunas:
-        connection.exec_driver_sql(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {definicao}")
-
-
-def _executar_migracoes_sqlite() -> None:
-    """Aplica migrações leves de compatibilidade na base SQLite local."""
-
-    if not IS_SQLITE:
-        return
-
-    with engine.begin() as connection:
-        tabelas = {
-            str(row[0])
-            for row in connection.exec_driver_sql(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
-
-        if "equipamento" in tabelas:
-            _garantir_coluna_sqlite(connection, "equipamento", "numero_serie", "VARCHAR")
-            _garantir_coluna_sqlite(connection, "equipamento", "range_temp", "VARCHAR")
-            # Novos campos numéricos adicionados ao modelo: garantir existência
-            _garantir_coluna_sqlite(connection, "equipamento", "temp_min", "FLOAT")
-            _garantir_coluna_sqlite(connection, "equipamento", "temp_max", "FLOAT")
-            _garantir_coluna_sqlite(connection, "equipamento", "humidade_max", "FLOAT")
-            _garantir_coluna_sqlite(connection, "equipamento", "fabricante", "VARCHAR")
-            _garantir_coluna_sqlite(connection, "equipamento", "modelo", "VARCHAR")
-            _garantir_coluna_sqlite(connection, "equipamento", "ano_fabrico", "INTEGER")
-            _garantir_coluna_sqlite(connection, "equipamento", "potencia_kw", "FLOAT")
-            _garantir_coluna_sqlite(connection, "equipamento", "ligacao_eletrica", "VARCHAR")
-            _garantir_coluna_sqlite(connection, "equipamento", "corrente_a", "FLOAT")
-            _garantir_coluna_sqlite(connection, "equipamento", "voltagem_v", "FLOAT")
-            _garantir_coluna_sqlite(connection, "equipamento", "peso_kg", "FLOAT")
-            _garantir_coluna_sqlite(connection, "equipamento", "peso_max_kg", "FLOAT")
-            _garantir_coluna_sqlite(connection, "equipamento", "notas_tecnicas", "TEXT")
-            _garantir_coluna_sqlite(connection, "equipamento", "foto_url", "VARCHAR")
-            _garantir_coluna_sqlite(
-                connection,
-                "equipamento",
-                "atualizado_em",
-                "DATETIME NOT NULL DEFAULT '2000-01-01 00:00:00'",
-            )
-
-        if "utilizador" in tabelas:
-            _garantir_coluna_sqlite(connection, "utilizador", "email", "VARCHAR")
-            _garantir_coluna_sqlite(connection, "utilizador", "cargo", "VARCHAR")
-            _garantir_coluna_sqlite(connection, "utilizador", "criado_em", "DATETIME")
-
-        if "avaria" in tabelas:
-            _garantir_coluna_sqlite(connection, "avaria", "reportado_por_id", "INTEGER")
-            _garantir_coluna_sqlite(connection, "avaria", "prioridade", "VARCHAR NOT NULL DEFAULT 'Media'")
-
-        if "manutencao" in tabelas:
-            _garantir_coluna_sqlite(connection, "manutencao", "executado_por_id", "INTEGER")
-            _garantir_coluna_sqlite(connection, "manutencao", "periodicidade_dias", "INTEGER")
-            _garantir_coluna_sqlite(connection, "manutencao", "criado_em", "DATETIME")
-
-        if "calibracao" in tabelas:
-            _garantir_coluna_sqlite(connection, "calibracao", "executado_por_id", "INTEGER")
-            _garantir_coluna_sqlite(connection, "calibracao", "periodicidade_dias", "INTEGER")
-            _garantir_coluna_sqlite(connection, "calibracao", "observacoes", "TEXT")
-            _garantir_coluna_sqlite(connection, "calibracao", "criado_em", "DATETIME")
-
-        if "documentacaoequipamento" not in tabelas:
-            connection.exec_driver_sql(
-                """
-                CREATE TABLE documentacaoequipamento (
-                    id INTEGER PRIMARY KEY,
-                    equipamento_id INTEGER NOT NULL,
-                    carregado_por_id INTEGER,
-                    titulo VARCHAR NOT NULL,
-                    tipo_documento VARCHAR NOT NULL DEFAULT 'outro',
-                    caminho_ficheiro VARCHAR NOT NULL,
-                    descricao TEXT,
-                    criado_em DATETIME NOT NULL
-                )
-                """
-            )
+    resultado = connection.exec_driver_sql(
+        "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+        f"WHERE TABLE_NAME = '{tabela}' AND COLUMN_NAME = '{coluna}'"
+    ).first()
+    if not resultado:
+        connection.exec_driver_sql(f"ALTER TABLE [{tabela}] ADD [{coluna}] {definicao}")
 
 
 def _garantir_indices_filtrados_mssql() -> None:
-    """Cria indices unicos filtrados para colunas opcionais em MSSQL.
+    """Cria indices unicos filtrados e adiciona colunas em falta no SQL Server.
 
-    Porque: em SQL Server, ``UNIQUE`` sobre colunas anulaveis pode introduzir
-    restricoes indesejadas para multiplos registos com ``NULL``. O indice
-    filtrado preserva unicidade apenas quando existe valor real.
+    Porque: em SQL Server, UNIQUE sobre colunas anulaveis pode introduzir
+    restricoes indesejadas para multiplos registos com NULL. O indice filtrado
+    preserva unicidade apenas quando existe valor real.
+    Esta funcao e idempotente — pode ser chamada multiplas vezes em seguranca.
     """
 
     if not IS_MSSQL:
         return
 
-    instrucoes = (
-        """
-        IF OBJECT_ID('equipamento') IS NOT NULL
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM sys.indexes WHERE name = 'ux_equipamento_numero_serie_not_null'
-            )
-            CREATE UNIQUE INDEX ux_equipamento_numero_serie_not_null
-            ON equipamento (numero_serie)
-            WHERE numero_serie IS NOT NULL
-        END
-        """,
-        """
-        IF OBJECT_ID('utilizador') IS NOT NULL
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM sys.indexes WHERE name = 'ux_utilizador_email_not_null'
-            )
-            CREATE UNIQUE INDEX ux_utilizador_email_not_null
-            ON utilizador (email)
-            WHERE email IS NOT NULL
-        END
-        """,
-    )
-
     with engine.begin() as connection:
-        for instrucao in instrucoes:
-            connection.exec_driver_sql(instrucao)
+        # ─── Indices unicos filtrados (NULL-safe) ───
+        for instrucao in (
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'ux_equipamentos_numero_serie_not_null')
+                CREATE UNIQUE INDEX ux_equipamentos_numero_serie_not_null
+                ON Equipamentos (numero_serie) WHERE numero_serie IS NOT NULL
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'ux_utilizadores_email_not_null')
+                CREATE UNIQUE INDEX ux_utilizadores_email_not_null
+                ON Utilizadores (email) WHERE email IS NOT NULL
+            """,
+        ):
+            try:
+                connection.exec_driver_sql(instrucao)
+            except Exception:
+                logger.warning(
+                    "Nao foi possivel garantir indice filtrado: %.80s", instrucao.strip()
+                )
+
+        # ─── Colunas em falta: Equipamentos ───
+        for coluna, definicao in (
+            ("numero_serie",      "NVARCHAR(100)  NULL"),
+            ("temp_min",          "FLOAT          NULL"),
+            ("temp_max",          "FLOAT          NULL"),
+            ("humidade_max",      "FLOAT          NULL"),
+            ("fabricante",        "NVARCHAR(120)  NULL"),
+            ("modelo",            "NVARCHAR(120)  NULL"),
+            ("ano_fabrico",       "INT            NULL"),
+            ("largura_mm",        "FLOAT          NULL"),
+            ("altura_mm",         "FLOAT          NULL"),
+            ("profundidade_mm",   "FLOAT          NULL"),
+            ("volume_l",          "FLOAT          NULL"),
+            ("potencia_kw",       "FLOAT          NULL"),
+            ("ligacao_eletrica",  "NVARCHAR(80)   NULL"),
+            ("corrente_a",        "FLOAT          NULL"),
+            ("voltagem_v",        "FLOAT          NULL"),
+            ("peso_kg",           "FLOAT          NULL"),
+            ("peso_max_kg",       "FLOAT          NULL"),
+            ("notas_tecnicas",    "NVARCHAR(MAX)  NULL"),
+            ("foto_url",          "NVARCHAR(500)  NULL"),
+            ("atualizado_em",     "DATETIME NOT NULL DEFAULT GETUTCDATE()"),
+        ):
+            _garantir_coluna_mssql(connection, "Equipamentos", coluna, definicao)
+
+        # ─── Colunas em falta: Utilizadores ───
+        for coluna, definicao in (
+            ("iniciais",          "NVARCHAR(10)   NULL"),
+            ("email",             "NVARCHAR(180)  NULL"),
+            ("cargo",             "NVARCHAR(100)  NULL"),
+            ("forcar_troca_pin",  "BIT NOT NULL DEFAULT 1"),
+        ):
+            _garantir_coluna_mssql(connection, "Utilizadores", coluna, definicao)
+
+        # ─── Colunas em falta: Reservas (necessárias para OEE) ───
+        for coluna, definicao in (
+            ("metodo",                   "NVARCHAR(180) NULL"),
+            ("duracao_prevista_minutos", "INT           NULL"),
+            ("concluido_com_sucesso",    "BIT           NULL"),
+            ("fim_automatico",           "DATETIME      NULL"),
+        ):
+            _garantir_coluna_mssql(connection, "Reservas", coluna, definicao)
+
+        # ─── Colunas em falta: SessoesUso (duração e fim automático por sessão) ───
+        for coluna, definicao in (
+            ("duracao_prevista_minutos", "INT      NULL"),
+            ("fim_automatico",           "DATETIME NULL"),
+        ):
+            _garantir_coluna_mssql(connection, "SessoesUso", coluna, definicao)
+
+        # ─── Colunas em falta: Avarias (utilizador que registou a avaria) ───
+        for coluna, definicao in (
+            ("utilizador_id", "INT NULL FOREIGN KEY REFERENCES Utilizadores(id)"),
+        ):
+            _garantir_coluna_mssql(connection, "Avarias", coluna, definicao)
 
 
 def validar_ligacao() -> None:
     """Valida a ligacao a base de dados com uma consulta simples.
 
     Raises:
-        RuntimeError: Se a base de dados nao responder.
+        RuntimeError: Se a base de dados nao responder (falha de arranque).
     """
 
     try:
@@ -314,27 +268,23 @@ def criar_tabelas() -> None:
         try:
             SQLModel.metadata.create_all(engine)
         except ProgrammingError as exc:
-            # Se ocorrer um ProgrammingError durante a criação do esquema,
-            # verificamos se as tabelas críticas foram criadas; caso contrário
-            # abortamos para não prosseguir com um estado inconsistente.
+            # ProgrammingError pode surgir em BDs existentes com esquema parcial;
+            # verificamos se as tabelas críticas existem antes de abortar.
             logger.warning("ProgrammingError ao criar esquema: %s", exc)
             try:
                 with engine.connect() as connection:
                     rows = connection.exec_driver_sql("SELECT name FROM sys.tables")
                     existentes = {str(r[0]).lower() for r in rows}
             except Exception:
-                # Não conseguimos introspectar o esquema — re-levanta o erro
                 raise
 
-            obrigatorias = {"equipamento", "manutencao", "avaria"}
+            obrigatorias = {"equipamentos", "manutencoes", "avarias"}
             faltam = obrigatorias - existentes
             if faltam:
-                logger.error("Tabelas obrigatórias ausentes após erro de criação: %s", faltam)
+                logger.error("Tabelas obrigatorias ausentes apos erro de criacao: %s", faltam)
                 raise
-            else:
-                logger.warning("Tabelas obrigatórias existem; prosseguindo apesar do erro de criação")
+            logger.warning("Tabelas obrigatorias existem; prosseguindo apesar do erro de criacao")
 
-        _executar_migracoes_sqlite()
         _garantir_indices_filtrados_mssql()
     except SQLAlchemyError as exc:
         logger.exception("Falha ao inicializar o esquema relacional")
@@ -347,13 +297,10 @@ def get_session() -> Generator[Session, Any, None]:
     Yields:
         Session: Sessao SQLModel ativa.
 
-    Raises:
-        RuntimeError: Se ocorrer falha de ligacao durante o pedido.
+    Porque: ao nao encapsular em RuntimeError, os handlers dos endpoints
+    conseguem apanhar SQLAlchemyError diretamente e devolver respostas 503
+    com contexto adequado. O handler global em main.py cobre os casos nao tratados.
     """
 
-    try:
-        with Session(engine) as session:
-            yield session
-    except SQLAlchemyError as exc:
-        logger.exception("Falha de ligacao a base de dados durante o pedido")
-        raise RuntimeError("Falha de ligacao a base de dados") from exc
+    with Session(engine) as session:
+        yield session

@@ -51,10 +51,11 @@ export const api = {
   // ── Auth ──
   authListaUtilizadores: () => request('/auth/utilizadores'),
   authBootstrapStatus:    () => request('/auth/bootstrap-status', { noAuthPrompt: true }),
-  authLogin:              (user_id, pin) => request('/auth/login', { method: 'POST', body: JSON.stringify({ user_id, pin }) }),
+  authLogin:              (user_id, pin) => request('/auth/login', { method: 'POST', body: JSON.stringify({ user_id, pin }), noAuthPrompt: true }),
   authBootstrapAdmin:     (data) => request('/auth/bootstrap-admin', { method: 'POST', body: JSON.stringify(data), noAuthPrompt: true }),
+  authAutoRegisto:        (data) => request('/auth/auto-registo', { method: 'POST', body: JSON.stringify(data), noAuthPrompt: true }),
   authMe:                 () => request('/auth/me', { noAuthPrompt: true }),
-  authAlterarPin:         (pin_atual, novo_pin) => request('/auth/pin', { method: 'PATCH', body: JSON.stringify({ pin_atual, novo_pin }) }),
+  authAlterarPin:         (pin_atual, novo_pin) => request('/auth/pin', { method: 'PATCH', body: JSON.stringify({ pin_atual, novo_pin }), noAuthPrompt: true }),
   authLogout:             () => request('/auth/logout', { method: 'POST', noAuthPrompt: true }),
   authLogs:               () => request('/auth/logs'),
 
@@ -81,9 +82,13 @@ export const api = {
   atualizarEstado:        (id, novo_estado) => request(`/equipamentos/${id}/estado`, { method: 'PATCH', body: JSON.stringify({ novo_estado }) }),
 
   // ── Check-in / Check-out ──
-  iniciarCheckin:         (id, reserva_id = null) =>
-    request(`/equipamentos/${id}/checkin`, { method: 'POST', body: JSON.stringify({ reserva_id }) }),
+  iniciarCheckin:         (id, reserva_id = null, duracao_prevista_minutos = null) =>
+    request(`/equipamentos/${id}/checkin`, { method: 'POST', body: JSON.stringify({ reserva_id, duracao_prevista_minutos }) }),
+  obterSessaoAtiva:       (id)          => request(`/equipamentos/${id}/sessao-ativa`),
+  editarDuracaoSessao:    (id, duracao_prevista_minutos) =>
+    request(`/equipamentos/${id}/sessao-ativa/duracao`, { method: 'PATCH', body: JSON.stringify({ duracao_prevista_minutos }) }),
   terminarCheckout:       (id)          => request(`/equipamentos/${id}/checkout`, { method: 'PATCH' }),
+  checkoutForcado:        (id)          => request(`/equipamentos/${id}/checkout-forcado`, { method: 'PATCH' }),
   listarSessoes:          (id)          => request(`/equipamentos/${id}/sessoes`),
   eficienciaEquipamento:  (id, dias=30) => request(`/equipamentos/${id}/eficiencia?dias=${dias}`),
 
@@ -91,6 +96,20 @@ export const api = {
   listarAvarias:          (equipamentoId) => request(`/equipamentos/${equipamentoId}/avarias`),
   listarTodasAvarias:     (resolvida)     => request(`/avarias${resolvida !== undefined ? `?resolvida=${resolvida}` : ''}`),
   registarAvaria:         (id, descricao) => request(`/equipamentos/${id}/avaria`, { method: 'POST', body: JSON.stringify({ descricao }) }),
+  exportarAvariasPdf:     async ({ resolvida, pesquisa } = {}) => {
+    const token = getStoredToken()
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const params = new URLSearchParams()
+    if (resolvida !== undefined) params.set('resolvida', resolvida)
+    if (pesquisa) params.set('pesquisa', pesquisa)
+    const query = params.toString()
+    const res = await fetch(`${BASE}/avarias/exportar/pdf${query ? `?${query}` : ''}`, { headers })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `Erro ${res.status}`)
+    }
+    return res.blob()
+  },
   resolverAvaria:         (id, notas)     => request(`/avarias/${id}/resolver`, { method: 'PATCH', body: JSON.stringify({ notas_resolucao: notas }) }),
 
   // ── Manutenções ──
@@ -108,6 +127,7 @@ export const api = {
   listarReservas:         ()              => request('/reservas'),
   reservasPorDia:         (data)          => request(`/reservas/por-dia?data=${data}`),
   criarReserva:           (data)          => request('/reservas', { method: 'POST', body: JSON.stringify(data) }),
+  atualizarReserva:       (id, data)      => request(`/reservas/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   exportarReservasPdf:    async ()        => {
     const token = getStoredToken()
     const headers = token ? { Authorization: `Bearer ${token}` } : {}

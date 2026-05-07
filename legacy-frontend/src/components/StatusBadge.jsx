@@ -7,26 +7,37 @@ import React from 'react'
  */
 const MAP = {
   'Disponível': { cls: 'badge-disponivel', label: 'Disponível' },
-  'Em funcionamento': { cls: 'badge-ok', label: 'Disponível' },
   'Avariado': { cls: 'badge-nok', label: 'Avariado' },
-  'NOK': { cls: 'badge-nok', label: 'Avariado' },
   'Ocupado': { cls: 'badge-ocupado', label: 'Ocupado' },
   'Em calibração': { cls: 'badge-calib', label: 'Em Calibração' },
   'Em manutenção': { cls: 'badge-manut', label: 'Em Manutenção' },
 }
 
+const LEGACY_MAP = {
+  'nok': 'Avariado',
+  'em funcionamento': 'Disponível',
+}
+
+export function normalizarEstadoEquipamento(estado) {
+  if (estado === null || estado === undefined) return 'Disponível'
+
+  const texto = String(estado).trim()
+  return LEGACY_MAP[texto.toLowerCase()] ?? texto
+}
+
 function StatusBadge({ variant = 'neutral', children, estado }) {
   if (estado !== undefined) {
-    const { cls, label } = MAP[estado] ?? { cls: 'badge-nok', label: estado ?? '—' }
+    const estadoNormalizado = normalizarEstadoEquipamento(estado)
+    const { cls, label } = MAP[estadoNormalizado] ?? { cls: 'badge-nok', label: estadoNormalizado ?? '—' }
     return <span className={`badge ${cls}`}>{label}</span>
   }
 
   const base = 'badge'
-  const cls = variant === 'ok'
+  const cls = variant === 'success'
     ? `${base} badge-ok`
-    : variant === 'nok'
+    : variant === 'danger'
       ? `${base} badge-nok`
-      : variant === 'ocupado'
+      : variant === 'occupied'
         ? `${base} badge-ocupado`
         : base
 

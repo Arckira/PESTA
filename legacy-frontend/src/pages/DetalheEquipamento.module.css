@@ -4,7 +4,72 @@
   font-size: 13px;
   color: var(--text-dim);
 }
-.erro { color: var(--red); }
+
+/* Estado de carregamento específico para scans QR — feedback visual imediato ao operador */
+.loadingQR {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  height: 60vh;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loadingQRSpinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--border);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Ecrã de erro robusto para equipamento não encontrado (ex: QR de equipamento eliminado) */
+.erroContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 60vh;
+  text-align: center;
+  font-family: var(--font-mono);
+}
+
+.erroIcon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  border: 1px solid var(--red);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--red);
+}
+
+.erroTitulo {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 4px;
+}
+
+.erroDetalhe {
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 320px;
+}
 
 .breadcrumb {
   display: flex;
@@ -96,8 +161,10 @@
 
 .acoes {
   display: flex;
-  gap: 10px;
+  flex-direction: row;
+  gap: 16px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 /* Buttons */
@@ -130,6 +197,21 @@
 }
 .btnRed:hover:not(:disabled) { background: var(--red-glow); }
 .btnRed:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btnGreen {
+  background: var(--green);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 9px 18px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  transition: opacity var(--transition);
+}
+.btnGreen:hover:not(:disabled) { opacity: 0.9; }
+.btnGreen:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btnSecondary {
   background: transparent;
@@ -270,6 +352,36 @@
 }
 .tab:hover { color: var(--text-secondary); }
 .tabActive { color: var(--amber); border-bottom-color: var(--amber); }
+
+/* Countdown timer */
+.countdown {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  border: 1px solid currentColor;
+  display: inline-block;
+  color: var(--green);
+  background: rgba(34,197,94,0.07);
+  transition: color 0.3s, background 0.3s;
+}
+.countdownWarning {
+  color: #f97316;
+  background: rgba(249,115,22,0.08);
+  border-color: #f97316;
+}
+.countdownExpired {
+  color: var(--red);
+  background: var(--red-glow);
+  border-color: var(--red);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
 
 /* Table inside section */
 .table { width: 100%; border-collapse: collapse; font-size: 13px; }

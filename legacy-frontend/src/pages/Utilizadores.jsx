@@ -3,6 +3,7 @@ import { api } from '../api/index.js'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import styles from './Utilizadores.module.css'
+import { corDoUtilizador } from '../utils/coresUtilizadores.js'
 
 const EMPTY = { nome: '', numero_colaborador: '', departamento: '', role: 'user' }
 
@@ -13,7 +14,6 @@ export default function Utilizadores() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [roleDrafts, setRoleDrafts] = useState({})
-  const [rolePins, setRolePins] = useState({})
   const [roleSavingId, setRoleSavingId] = useState(null)
   const [editingRows, setEditingRows] = useState({})
 
@@ -40,6 +40,10 @@ export default function Utilizadores() {
     if (!window.confirm(`Eliminar o utilizador "${nome}"?`)) return
     try {
       await api.eliminarUtilizador(id)
+      // Remove imediatamente do estado local para evitar flash antes do re-fetch
+      setUtilizadores((prev) => prev.filter((u) => u.id !== id))
+      setEditingRows((prev) => { const c = { ...prev }; delete c[id]; return c })
+      setRoleDrafts((prev) => { const c = { ...prev }; delete c[id]; return c })
       toast.success('Utilizador eliminado com sucesso.')
       carregar()
     } catch (e) {
@@ -48,18 +52,10 @@ export default function Utilizadores() {
   }
 
   const handleRoleChange = async (id, role) => {
-    const pin_atual = (rolePins[id] || '').trim()
     setRoleSavingId(id)
     try {
-      if (/^\d{4}$/.test(pin_atual)) {
-        // Legacy: admin can confirm with PIN (keeps existing secured flow)
-        await api.adminAlterarRoleUtilizador(id, role, pin_atual)
-      } else {
-        // Inline update without PIN (authenticated admin)
-        await api.atualizarUtilizador(id, { role })
-      }
+      await api.atualizarUtilizador(id, { role })
       toast.success('Permissões atualizadas com sucesso.')
-      setRolePins((prev) => ({ ...prev, [id]: '' }))
       carregar()
     } catch (e) {
       toast.error(e.message || 'Não foi possível atualizar as permissões.')
@@ -71,12 +67,16 @@ export default function Utilizadores() {
   const startInlineEdit = (ut) => {
     setEditingRows((prev) => ({
       ...prev,
-      [ut.id]: { nome: ut.nome || '', numero_colaborador: ut.numero_colaborador || '', departamento: ut.departamento || '' }
+      [ut.id]: { nome: ut.nome || '', numero_colaborador: ut.numero_colaborador || '', departamento: ut.departamento || '', pin: '' }
     }))
   }
 
   const startCreateRow = () => {
-    setEditingRows((prev) => ({ ...prev, new: { nome: '', numero_colaborador: '', departamento: '', role: 'user' } }))
+    setEditingRows((prev) => {
+      const copy = { ...prev }
+      delete copy.new
+      return { ...copy, new: { nome: '', numero_colaborador: '', departamento: '', role: 'user', pin: '' } }
+    })
   }
 
   const cancelInlineEdit = (id) => {
@@ -98,7 +98,7 @@ export default function Utilizadores() {
       setRoleSavingId(id)
       if (id === 'new') {
         await api.criarUtilizador(draft)
-        toast.success('Utilizador criado com sucesso.')
+        toast.success('Utilizador criado. PIN inicial: 0000 (obrigatório alterar no primeiro login).')
       } else {
         await api.atualizarUtilizador(id, draft)
         toast.success('Utilizador atualizado com sucesso.')
@@ -160,6 +160,11 @@ export default function Utilizadores() {
         </button>
       </div>
 
+      <div className={styles.legendaCores}>
+        <span className={styles.legendaIcone}>◉</span>
+        A cor junto ao nome identifica as reservas de cada utilizador no calendário.
+      </div>
+
       {loading && <div className={styles.empty}>A carregar…</div>}
 
       {!loading && (
@@ -171,34 +176,96 @@ export default function Utilizadores() {
                 <th>Nome</th>
                 <th>Nº Colaborador</th>
                 <th>Departamento</th>
+                <th style={{ width: 100 }}>PIN</th>
                 <th>Role</th>
-                <th>PIN admin</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
+              {editingRows.new && (
+                <tr key="new">
+                  <td className="mono" style={{ color: 'var(--text-dim)' }}>—</td>
+                  <td style={{ fontWeight: 500 }}>
+                    <input autoComplete="off" className={styles.input} value={editingRows.new.nome} onChange={e => setEditingRows(prev => ({ ...prev, new: { ...prev.new, nome: e.target.value } }))} />
+                  </td>
+                  <td className="mono" style={{ color: 'var(--text-secondary)' }}>
+                    <input autoComplete="off" className={styles.input} value={editingRows.new.numero_colaborador} onChange={e => setEditingRows(prev => ({ ...prev, new: { ...prev.new, numero_colaborador: e.target.value } }))} />
+                  </td>
+                  <td style={{ color: 'var(--text-secondary)' }}>
+                    <input autoComplete="off" className={styles.input} value={editingRows.new.departamento} onChange={e => setEditingRows(prev => ({ ...prev, new: { ...prev.new, departamento: e.target.value } }))} />
+                  </td>
+                  <td>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      className={styles.input}
+                      placeholder="0000"
+                      maxLength={4}
+                      value={editingRows.new.pin || ''}
+                      onChange={e => setEditingRows(prev => ({ ...prev, new: { ...prev.new, pin: e.target.value } }))}
+                      style={{ width: 80 }}
+                    />
+                  </td>
+                  <td>
+                    <select className={styles.input} value={editingRows.new.role} onChange={e => setEditingRows(prev => ({ ...prev, new: { ...prev.new, role: e.target.value } }))}>
+                      <option value="user">user</option>
+                      <option value="admin">admin</option>
+                    </select>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                      <button className={styles.btnPrimary} onClick={() => saveInlineEdit('new')} disabled={roleSavingId === 'new'}>{roleSavingId === 'new' ? 'A guardar…' : 'Guardar'}</button>
+                      <button className={styles.btnSecondary} onClick={() => cancelInlineEdit('new')}>Cancelar</button>
+                    </div>
+                  </td>
+                </tr>
+              )}
               {utilizadores.map(ut => (
                 <tr key={ut.id}>
                   <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(ut.id).padStart(3,'0')}</td>
                   <td style={{ fontWeight: 500 }}>
-                    {editingRows[ut.id] ? (
-                      <input className={styles.input} value={editingRows[ut.id].nome} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], nome: e.target.value } }))} />
+                      {editingRows[ut.id] ? (
+                      <input autoComplete="off" className={styles.input} value={editingRows[ut.id].nome} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], nome: e.target.value } }))} />
                     ) : (
-                      ut.nome
+                      <span className={styles.nomeComCor}>
+                        <span
+                          className={styles.badgeIniciais}
+                          style={{ backgroundColor: corDoUtilizador(ut.id) }}
+                        >
+                          {ut.nome ? ut.nome.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase() : '?'}
+                        </span>
+                        {ut.nome}
+                      </span>
                     )}
                   </td>
                   <td className="mono" style={{ color: 'var(--text-secondary)' }}>
-                    {editingRows[ut.id] ? (
-                      <input className={styles.input} value={editingRows[ut.id].numero_colaborador} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], numero_colaborador: e.target.value } }))} />
+                      {editingRows[ut.id] ? (
+                      <input autoComplete="off" className={styles.input} value={editingRows[ut.id].numero_colaborador} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], numero_colaborador: e.target.value } }))} />
                     ) : (
                       ut.numero_colaborador
                     )}
                   </td>
                   <td style={{ color: 'var(--text-secondary)' }}>
                     {editingRows[ut.id] ? (
-                      <input className={styles.input} value={editingRows[ut.id].departamento} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], departamento: e.target.value } }))} />
+                      <input autoComplete="off" className={styles.input} value={editingRows[ut.id].departamento} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], departamento: e.target.value } }))} />
                     ) : (
-                      ut.departamento
+                      ut.departamento || ''
+                    )}
+                  </td>
+                  <td>
+                    {editingRows[ut.id] ? (
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        className={styles.input}
+                        placeholder="Novo PIN"
+                        maxLength={4}
+                        value={editingRows[ut.id].pin || ''}
+                        onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], pin: e.target.value } }))}
+                        style={{ width: 80 }}
+                      />
+                    ) : (
+                      <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', letterSpacing: '0.15em' }}>••••</span>
                     )}
                   </td>
                   <td>
@@ -211,17 +278,6 @@ export default function Utilizadores() {
                       <option value="user">user</option>
                       <option value="admin">admin</option>
                     </select>
-                  </td>
-                  <td>
-                    <input
-                      className={styles.input}
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={4}
-                      placeholder="PIN admin"
-                      value={rolePins[ut.id] || ''}
-                      onChange={(e) => setRolePins((prev) => ({ ...prev, [ut.id]: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
-                    />
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

@@ -103,7 +103,7 @@ export default function Manutencoes() {
         <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(mn.data_realizada)}</td>
         <td>
           {mn.proxima_data ? (
-            <StatusBadge variant={proxVencida ? 'nok' : proxProxima ? 'ocupado' : 'ok'}>
+            <StatusBadge variant={proxVencida ? 'danger' : proxProxima ? 'occupied' : 'success'}>
               {proxVencida && '⚠ '}{proxProxima && '● '}{fmt(mn.proxima_data)}
             </StatusBadge>
           ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}

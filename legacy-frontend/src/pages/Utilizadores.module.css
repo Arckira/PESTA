@@ -24,3 +24,49 @@
 .input:focus { border-color: var(--amber-dim); }
 .formErro { margin-top: 10px; padding: 10px 14px; background: var(--red-glow); border: 1px solid var(--red); border-radius: var(--radius); color: var(--red); font-size: 12px; font-family: var(--font-mono); }
 .modalActions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+
+.legendaCores {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  margin-bottom: 16px;
+}
+
+.legendaIcone {
+  color: var(--amber);
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.nomeComCor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.badgeIniciais {
+  width: 22px;
+  height: 22px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 8px;
+  letter-spacing: 0.03em;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  user-select: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}

@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/index.js'
 import EmptyState from '../components/EmptyState.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
-import { downloadCsv } from '../utils/downloadCsv.js'
 import styles from './Avarias.module.css'
 import { useEquipamentos } from '../hooks/useEquipamentos.js'
 import StatusBadge from '../components/StatusBadge.jsx'
@@ -22,7 +21,6 @@ function fmt(dt) {
 export default function Avarias() {
   const toast = useToast()
   const { map: equipamentos, loading: eqLoading } = useEquipamentos()
-
   const [avarias, setAvarias] = useState([])
   const [loading, setLoading] = useState(true)
   const [filtro, setFiltro] = useState('abertas') // 'abertas' | 'resolvidas' | 'todas'
@@ -51,7 +49,6 @@ export default function Avarias() {
 
   const navigate = useNavigate()
   const pesquisaLower = pesquisa.trim().toLowerCase()
-
   const avariasFiltradas = useMemo(() => {
     if (!pesquisaLower) return avarias
 
@@ -61,6 +58,8 @@ export default function Avarias() {
         String(a.id),
         eq?.nome,
         a.descricao,
+        a.empresa_externa, // Adicionado à pesquisa
+        a.num_sc_po,       // Adicionado à pesquisa
         a.resolvida ? 'resolvida' : 'aberta',
       ]
         .filter(Boolean)
@@ -70,43 +69,29 @@ export default function Avarias() {
     })
   }, [avarias, equipamentos, pesquisaLower])
 
-  const fmtCsv = useCallback((dt) => {
-    if (!dt) return ''
-    const d = new Date(dt)
-    if (Number.isNaN(d.getTime())) return ''
-    return d.toISOString().slice(0, 19).replace('T', ' ')
-  }, [])
-
   const handleExport = useCallback(() => {
     if (!avariasFiltradas || avariasFiltradas.length === 0) return
 
-    const filename = `avarias-${new Date().toISOString().slice(0, 10)}.csv`
-    const rows = avariasFiltradas.map(a => {
-      const eq = equipamentos[a.equipamento_id]
-      return {
-        id: String(a.id).padStart(3, '0'),
-        equipamento: eq?.nome || `EQ-${a.equipamento_id}`,
-        descricao: a.descricao || '',
-        data_registo: fmtCsv(a.data_registo),
-        estado: a.resolvida ? 'Resolvida' : 'Aberta',
-        data_resolucao: fmtCsv(a.data_resolucao),
-      }
-    })
-
-    downloadCsv({
-      filename,
-      rows,
-      delimiter: ';',
-      columns: [
-        { key: 'id', header: '#' },
-        { key: 'equipamento', header: 'Equipamento' },
-        { key: 'descricao', header: 'Descrição' },
-        { key: 'data_registo', header: 'Data Registo' },
-        { key: 'estado', header: 'Estado' },
-        { key: 'data_resolucao', header: 'Data Resolução' },
-      ],
-    })
-  }, [avariasFiltradas, equipamentos, fmtCsv])
+    const resolvida = filtro === 'abertas' ? false : filtro === 'resolvidas' ? true : undefined
+    api.exportarAvariasPdf({ resolvida, pesquisa })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        const now = new Date()
+        const pad = (n) => String(n).padStart(2, '0')
+        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`
+        a.href = url
+        a.download = `avarias-${stamp}.pdf`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+        toast.success('PDF das avarias exportado com sucesso.')
+      })
+      .catch((e) => {
+        toast.error(e.message || 'Não foi possível exportar o PDF das avarias.')
+      })
+  }, [avariasFiltradas, filtro, pesquisa, toast])
 
   const handleResolver = useCallback(async () => {
     if (!modal) return
@@ -139,9 +124,22 @@ export default function Avarias() {
           ) : `EQ-${av.equipamento_id}`}
         </td>
         <td className={styles.descricao}>{av.descricao}</td>
+        
+        {/* --- NOVAS COLUNAS INJETADAS AQUI --- */}
+        <td style={{ color: av.empresa_externa ? 'inherit' : 'var(--text-dim)' }}>
+          {av.empresa_externa || '—'}
+        </td>
+        <td className="mono" style={{ color: av.custo_reparacao ? 'var(--text-primary)' : 'var(--text-dim)' }}>
+          {av.custo_reparacao ? `${av.custo_reparacao.toFixed(2)}€` : '—'}
+        </td>
+        <td className="mono" style={{ fontSize: 11, color: av.num_sc_po ? 'inherit' : 'var(--text-dim)' }}>
+          {av.num_sc_po || '—'}
+        </td>
+        {/* ------------------------------------ */}
+
         <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(av.data_registo)}</td>
         <td>
-          <StatusBadge variant={av.resolvida ? 'ok' : 'nok'}>{av.resolvida ? 'Resolvida' : 'Aberta'}</StatusBadge>
+          <StatusBadge variant={av.resolvida ? 'success' : 'danger'}>{av.resolvida ? 'Resolvida' : 'Aberta'}</StatusBadge>
         </td>
         <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(av.data_resolucao)}</td>
         <td>
@@ -188,7 +186,7 @@ export default function Avarias() {
               disabled={avariasFiltradas.length === 0}
               onClick={handleExport}
             >
-              Exportar CSV
+              Exportar PDF
             </button>
           </div>
         </div>
@@ -198,7 +196,8 @@ export default function Avarias() {
 
       {!loadingPage && (
         <ResourceTable
-          columns={[ '#', 'Equipamento', 'Descrição', 'Data Registo', 'Estado', 'Data Resolução' ]}
+          // --- ADICIONADOS OS CABEÇALHOS AQUI ---
+          columns={[ '#', 'Equipamento', 'Descrição', 'Empresa', 'Custo (€)', 'SC / PO', 'Data Registo', 'Estado', 'Data Resolução', '' ]}
           items={avariasFiltradas}
           renderRow={renderRow}
           loading={false}
@@ -251,7 +250,7 @@ export default function Avarias() {
                   />
                 </label>
                 <p className={styles.aviso}>
-                  O equipamento voltará automaticamente a <strong>Em Funcionamento</strong> se não houver outras avarias abertas.
+                  O equipamento voltará automaticamente a <strong>Disponível</strong> se não houver outras avarias abertas.
                 </p>
               </>
             )}

@@ -5,12 +5,12 @@ import resourceTimelinePlugin from '@fullcalendar/resource-timeline'
 import interactionPlugin from '@fullcalendar/interaction'
 
 import { api } from '../api/index.js'
-import StatusBadge from '../components/StatusBadge.jsx'
+import StatusBadge, { normalizarEstadoEquipamento } from '../components/StatusBadge.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import styles from './Dashboard.module.css'
 
-const ESTADOS = ['Disponível', 'Ocupado', 'Avariado', 'Em calibração', 'Em manutenção']
+const ESTADOS = ['Disponível', 'Ocupado', 'Avariado', 'Em manutenção', 'Em calibração']
 
 export default function Dashboard() {
   const toast = useToast()
@@ -110,13 +110,14 @@ export default function Dashboard() {
 
   const { total, avariados, disponiveis, calib, manut, ocupados, recentes } = useMemo(() => {
     const list = equipamentos || []
+    const estadosNormalizados = list.map((e) => normalizarEstadoEquipamento(e.estado_atual))
     return {
       total: list.length,
-      avariados: list.filter((e) => e.estado_atual === 'Avariado').length,
-      disponiveis: list.filter((e) => e.estado_atual === 'Disponível').length,
-      calib: list.filter((e) => e.estado_atual === 'Em calibração').length,
-      manut: list.filter((e) => e.estado_atual === 'Em manutenção').length,
-      ocupados: list.filter((e) => e.estado_atual === 'Ocupado').length,
+      avariados: estadosNormalizados.filter((estado) => estado === 'Avariado').length,
+      disponiveis: estadosNormalizados.filter((estado) => estado === 'Disponível').length,
+      calib: estadosNormalizados.filter((estado) => estado === 'Em calibração').length,
+      manut: estadosNormalizados.filter((estado) => estado === 'Em manutenção').length,
+      ocupados: estadosNormalizados.filter((estado) => estado === 'Ocupado').length,
       recentes: [...list].sort((a, b) => b.id - a.id).slice(0, 6),
     }
   }, [equipamentos])
@@ -234,7 +235,7 @@ export default function Dashboard() {
           <div className="label" style={{ marginBottom: 14 }}>Distribuição por Estado</div>
           <div className={styles.barRow}>
             {ESTADOS.map((estado) => {
-              const count = equipamentos.filter((e) => e.estado_atual === estado).length
+              const count = equipamentos.filter((e) => normalizarEstadoEquipamento(e.estado_atual) === estado).length
               const pct = total ? (count / total) * 100 : 0
               return (
                 <div key={estado} className={styles.barItem}>

@@ -46,6 +46,10 @@
   align-items: center;
   justify-content: center;
   width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
 .logoBrand {
@@ -142,6 +146,34 @@
   border-top: 1px dashed var(--border);
   display: grid;
   gap: 10px;
+}
+
+.logoutBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  letter-spacing: 0.02em;
+}
+
+.logoutBtn:hover {
+  background: rgba(200, 16, 46, 0.08);
+  border-color: rgba(200, 16, 46, 0.30);
+  color: var(--red);
+}
+
+.logoutBtn:active {
+  background: rgba(200, 16, 46, 0.14);
 }
 
 /* ── Main ── */
