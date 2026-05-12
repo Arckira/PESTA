@@ -4,7 +4,7 @@ import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, TypeVar
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
@@ -39,6 +39,7 @@ ModeloT = TypeVar("ModeloT")
 # Garante as colunas novas de SessoesUso na primeira chamada ao check-in,
 # sem depender de reinício do servidor (migração lazy).
 _sessaouso_migrada = False
+_avarias_migrada = False
 
 def _garantir_colunas_sessaouso() -> None:
     global _sessaouso_migrada
@@ -51,10 +52,29 @@ def _garantir_colunas_sessaouso() -> None:
         with engine.begin() as conn:
             _garantir_coluna_mssql(conn, "SessoesUso", "duracao_prevista_minutos", "INT NULL")
             _garantir_coluna_mssql(conn, "SessoesUso", "fim_automatico", "DATETIME NULL")
+            _garantir_coluna_mssql(conn, "SessoesUso", "termino_forcado", "BIT NOT NULL DEFAULT 0")
+            _garantir_coluna_mssql(conn, "SessoesUso", "valida_para_stats", "BIT NOT NULL DEFAULT 1")
+            _garantir_coluna_mssql(conn, "SessoesUso", "projeto", "NVARCHAR(150) NULL")
+            _garantir_coluna_mssql(conn, "SessoesUso", "metodo", "NVARCHAR(180) NULL")
         _sessaouso_migrada = True
-        logger.info("Colunas SessoesUso.duracao_prevista_minutos / fim_automatico garantidas.")
+        logger.info("Colunas SessoesUso garantidas (incl. termino_forcado / valida_para_stats).")
     except Exception:
         logger.warning("Não foi possível garantir colunas SessoesUso — migração será re-tentada na próxima chamada.")
+
+def _garantir_colunas_avarias() -> None:
+    global _avarias_migrada
+    if _avarias_migrada:
+        return
+    if not IS_MSSQL:
+        _avarias_migrada = True
+        return
+    try:
+        with engine.begin() as conn:
+            _garantir_coluna_mssql(conn, "Avarias", "custo_reparacao", "FLOAT NULL")
+        _avarias_migrada = True
+        logger.info("Coluna Avarias.custo_reparacao garantida.")
+    except Exception:
+        logger.warning("Não foi possível garantir coluna Avarias.custo_reparacao — migração será re-tentada.")
 
 
 def _pdf_escape(texto: str) -> str:
@@ -281,7 +301,17 @@ _logs_auth: list[dict] = []
 
 def _agora_utc() -> datetime:
     """Devolve a data/hora UTC atual."""
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
+
+
+def _iso_z(dt: datetime | None) -> str | None:
+    """Serializa datetimes em ISO-8601 com sufixo Z."""
+
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _normalizar_pin(pin: str) -> str:
@@ -300,6 +330,24 @@ def _validar_dias(dias: int) -> int:
     if dias < 1 or dias > 365:
         raise HTTPException(status_code=400, detail="O parâmetro 'dias' deve estar entre 1 e 365")
     return dias
+
+
+def _calcular_oee_temporal(tempo_real_s: float, tempo_planeado_s: float) -> float | None:
+    """OEE = min(Tempo_Real / Tempo_Planeado, 1) × 100.
+
+    Centraliza a fórmula para que todos os endpoints usem o mesmo cálculo.
+    Devolve None se não houver tempo planeado (sem reservas no período).
+    Limita a 100% para que overruns não distorçam a métrica de eficiência.
+    """
+    if tempo_planeado_s <= 0:
+        return None
+    return round(min(tempo_real_s / tempo_planeado_s, 1.0) * 100, 1)
+
+
+def _calcular_valida_para_stats(inicio: datetime, fim: datetime, termino_forcado: bool) -> bool:
+    """Sessão válida para OEE: duracao >= 300s E não foi um término forçado."""
+    duracao_s = (fim - inicio).total_seconds()
+    return duracao_s >= 300 and not termino_forcado
 
 
 def _hash_pin(pin: str) -> str:
@@ -330,7 +378,7 @@ def _registar_log(
     Porque: Permite auditoria em tempo real sem impacto em performance na base de dados.
     """
     _logs_auth.append({
-        "timestamp": _agora_utc().isoformat(),
+        "timestamp": _iso_z(_agora_utc()),
         "acao": acao,
         "sucesso": sucesso,
         "detalhe": detalhe,
@@ -405,7 +453,7 @@ def _criar_sessao(utilizador: Utilizador, session: Session) -> dict[str, Any]:
         
         return {
             "token": token,
-            "expira_em": expira_em.isoformat(),
+            "expira_em": _iso_z(expira_em),
             "expira_em_epoch_ms": int(expira_em.timestamp() * 1000),
         }
     except SQLAlchemyError as exc:
@@ -566,6 +614,8 @@ async def lifespan(app: FastAPI):
     para não bloquear o arranque da aplicação.
     """
     criar_tabelas()
+    _garantir_colunas_sessaouso()
+    _garantir_colunas_avarias()
     # Limpa tokens expirados ao arrancar para evitar acumulação desnecessária.
     try:
         with Session(engine) as s:
@@ -619,7 +669,8 @@ class AvariaCreate(BaseModel):
     utilizador_id: Optional[int] = None
 
 class AvariaResolve(BaseModel):
-    notas_resolucao: Optional[str] = None
+    relatorio_tecnico: Optional[str] = None
+    custo: Optional[float] = None
 
 class ManutencaoCreate(BaseModel):
     descricao: str
@@ -646,6 +697,8 @@ class DocumentoCreate(BaseModel):
 class CheckinCreate(BaseModel):
     reserva_id: Optional[int] = None  # Opcional: pode fazer checkin sem reserva
     duracao_prevista_minutos: Optional[int] = None  # Duração estimada do ensaio em minutos
+    projeto: Optional[str] = None
+    metodo: Optional[str] = None
 
 class CheckoutCreate(BaseModel):
     concluido_com_sucesso: bool = True  # Marca se o ensaio foi concluído com sucesso
@@ -915,7 +968,7 @@ def auth_login(dados: LoginRequest, session: Session = Depends(get_session)) -> 
             raise HTTPException(status_code=503, detail="Falha ao renovar sessão") from exc
         sessao = {
             "token": sessao_ativa.token,
-            "expira_em": sessao_ativa.expira_em.isoformat(),
+            "expira_em": _iso_z(sessao_ativa.expira_em),
             "expira_em_epoch_ms": int(sessao_ativa.expira_em.timestamp() * 1000),
         }
     else:
@@ -1207,7 +1260,7 @@ def listar_logs_bd(
                 "entidade_id": e.entidade_id,
                 "detalhe": e.detalhe,
                 "sucesso": e.sucesso,
-                "criado_em": e.criado_em.isoformat(),
+                "criado_em": _iso_z(e.criado_em),
             }
             for e in entradas
         ]
@@ -1255,7 +1308,7 @@ def detalhe_equipamento(equipamento_id: int, session: Session = Depends(get_sess
                     SessaoUso.equipamento_id == equipamento_id,
                     SessaoUso.fim.is_(None),
                     SessaoUso.fim_automatico.is_not(None),
-                    SessaoUso.fim_automatico <= datetime.utcnow(),
+                    SessaoUso.fim_automatico <= _agora_utc(),
                 )
             ).first()
             if sessao_expirada:
@@ -1263,7 +1316,11 @@ def detalhe_equipamento(equipamento_id: int, session: Session = Depends(get_sess
                     "Auto-checkout: sessão %s do eq %s expirou em %s",
                     sessao_expirada.id, equipamento_id, sessao_expirada.fim_automatico,
                 )
-                sessao_expirada.fim = datetime.utcnow()
+                sessao_expirada.fim = _agora_utc()
+                sessao_expirada.termino_forcado = False
+                sessao_expirada.valida_para_stats = _calcular_valida_para_stats(
+                    sessao_expirada.inicio, sessao_expirada.fim, termino_forcado=False
+                )
                 eq.estado_atual = EstadoEquipamento.DISPONIVEL.value
                 session.add(sessao_expirada)
                 session.add(eq)
@@ -1325,7 +1382,7 @@ def exportar_equipamentos_pdf(
 
     linhas = [
         f"Total de equipamentos: {len(equipamentos_ordenados)}",
-        f"Gerado em: {datetime.utcnow().strftime('%d/%m/%Y %H:%M')} (UTC)",
+        f"Gerado em: {_agora_utc().strftime('%d/%m/%Y %H:%M')} (UTC)",
         "",
     ]
 
@@ -1341,7 +1398,7 @@ def exportar_equipamentos_pdf(
         ])
 
     ficheiro_pdf = _gerar_pdf_texto("Relatorio de Equipamentos", linhas)
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    timestamp = _agora_utc().strftime("%Y%m%d-%H%M%S")
 
     return Response(
         content=ficheiro_pdf,
@@ -1391,6 +1448,16 @@ def atualizar_equipamento(
             raise HTTPException(status_code=400, detail="Estado do equipamento inválido")
 
         estado_anterior = normalizar_estado_equipamento(eq.estado_atual)
+        # Impede libertar manualmente um equipamento com avaria aberta
+        if novo_estado == EstadoEquipamento.DISPONIVEL.value:
+            avaria_bloqueante = session.exec(
+                select(Avaria).where(Avaria.equipamento_id == equipamento_id, Avaria.resolvida == False)
+            ).first()
+            if avaria_bloqueante:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Não é possível marcar o equipamento como Disponível enquanto existir uma avaria aberta. Resolva a avaria primeiro."
+                )
         # Se transitar para 'Avariado' e não estava já avariado, prepara descrição
         if novo_estado == EstadoEquipamento.AVARIADO.value and estado_anterior != EstadoEquipamento.AVARIADO.value:
             descricao = changes.pop('descricao_avaria', None) or "Avaria detetada via alteração de estado"
@@ -1419,6 +1486,16 @@ def atualizar_estado(
     novo_estado = normalizar_estado_equipamento(dados.novo_estado)
     if novo_estado not in {estado.value for estado in EstadoEquipamento}:
         raise HTTPException(status_code=400, detail="Estado do equipamento inválido")
+    # Impede libertar manualmente um equipamento com avaria aberta
+    if novo_estado == EstadoEquipamento.DISPONIVEL.value:
+        avaria_bloqueante = session.exec(
+            select(Avaria).where(Avaria.equipamento_id == equipamento_id, Avaria.resolvida == False)
+        ).first()
+        if avaria_bloqueante:
+            raise HTTPException(
+                status_code=409,
+                detail="Não é possível marcar o equipamento como Disponível enquanto existir uma avaria aberta. Resolva a avaria primeiro."
+            )
     # Ao libertar manualmente o equipamento, encerra qualquer sessão ativa.
     if novo_estado == EstadoEquipamento.DISPONIVEL.value:
         sessao_aberta = session.exec(
@@ -1428,7 +1505,7 @@ def atualizar_estado(
             )
         ).first()
         if sessao_aberta:
-            sessao_aberta.fim = datetime.utcnow()
+            sessao_aberta.fim = _agora_utc()
             session.add(sessao_aberta)
     eq.estado_atual = novo_estado
     session.add(eq)
@@ -1558,14 +1635,14 @@ def fazer_checkin(
                     f"Sessão órfã detectada para eq {equipamento_id} de {sessao_aberta.utilizador}. "
                     f"Fechando automaticamente ao iniciar nova sessão."
                 )
-                sessao_aberta.fim = datetime.utcnow()
+                sessao_aberta.fim = _agora_utc()
                 session.add(sessao_aberta)
                 session.flush()  # Garante a mudança antes de continuar
             elif sessao_aberta.utilizador_id == utilizador_atual.id:
                 # Mesmo utilizador já tem um check-in ativo: bloquear
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Já tem um check-in ativo iniciado às {sessao_aberta.inicio.isoformat()}. "
+                    detail=f"Já tem um check-in ativo iniciado às {_iso_z(sessao_aberta.inicio)}. "
                            f"Para alterar a duração, use a opção 'Editar Duração'."
                 )
             else:
@@ -1573,12 +1650,12 @@ def fazer_checkin(
                 outro_utilizador = sessao_aberta.utilizador or "Utilizador desconhecido"
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Equipamento em uso por '{outro_utilizador}' desde {sessao_aberta.inicio.isoformat()}. "
+                    detail=f"Equipamento em uso por '{outro_utilizador}' desde {_iso_z(sessao_aberta.inicio)}. "
                            f"Não é possível iniciar novo ensaio."
                 )
 
         # ─── Criar nova sessão (transação atómica) ───
-        agora = datetime.utcnow()
+        agora = _agora_utc()
         fim_auto = (agora + timedelta(minutes=dados.duracao_prevista_minutos)) if dados.duracao_prevista_minutos else None
         nova_sessao = SessaoUso(
             equipamento_id=equipamento_id,
@@ -1588,6 +1665,8 @@ def fazer_checkin(
             inicio=agora,
             duracao_prevista_minutos=dados.duracao_prevista_minutos,
             fim_automatico=fim_auto,
+            projeto=dados.projeto,
+            metodo=dados.metodo,
         )
         eq.estado_atual = EstadoEquipamento.OCUPADO.value
         session.add(nova_sessao)
@@ -1603,6 +1682,22 @@ def fazer_checkin(
         
         _persistir_sessao(session, "Falha ao registar check-in")
         session.refresh(nova_sessao)
+
+        # Registo de auditoria: check-in é uma acção operacional crítica para OEE
+        _registar_log_bd(
+            session,
+            acao="checkin",
+            sucesso=True,
+            detalhe=f"Check-in iniciado no equipamento '{eq.nome}' (ID={equipamento_id}). "
+                    f"Projeto: {dados.projeto or '—'} | Método: {dados.metodo or '—'} | "
+                    f"Duração estimada: {dados.duracao_prevista_minutos or '?'} min.",
+            utilizador_id=utilizador_atual.id,
+            utilizador_nome=utilizador_atual.nome,
+            role=utilizador_atual.role,
+            entidade="SessaoUso",
+            entidade_id=nova_sessao.id,
+        )
+
         return {"mensagem": "Check-in realizado com sucesso.", "sessao": nova_sessao}
 
     except HTTPException:
@@ -1668,7 +1763,7 @@ def editar_duracao_sessao(
             "Duração atualizada para sessão %s: %s min, fim_automatico=%s",
             sessao.id,
             dados.duracao_prevista_minutos,
-            novo_fim.isoformat(),
+            _iso_z(novo_fim),
         )
 
         _persistir_sessao(session, "Falha ao atualizar duração da sessão")
@@ -1720,7 +1815,11 @@ def fazer_checkout(
         ):
             raise HTTPException(status_code=403, detail="Apenas o operador da sessão (ou admin) pode fazer checkout")
 
-        sessao_aberta.fim = datetime.utcnow()
+        sessao_aberta.fim = _agora_utc()
+        sessao_aberta.termino_forcado = False
+        sessao_aberta.valida_para_stats = _calcular_valida_para_stats(
+            sessao_aberta.inicio, sessao_aberta.fim, termino_forcado=False
+        )
         eq = session.get(Equipamento, equipamento_id)
         if eq:
             eq.estado_atual = EstadoEquipamento.DISPONIVEL.value
@@ -1777,8 +1876,12 @@ def fazer_checkout_com_status(
         ):
             raise HTTPException(status_code=403, detail="Apenas o operador da sessão (ou admin) pode fazer checkout")
 
-        sessao_aberta.fim = datetime.utcnow()
-        
+        sessao_aberta.fim = _agora_utc()
+        sessao_aberta.termino_forcado = False
+        sessao_aberta.valida_para_stats = _calcular_valida_para_stats(
+            sessao_aberta.inicio, sessao_aberta.fim, termino_forcado=False
+        )
+
         # Marcar o status de sucesso/falha na reserva associada
         if sessao_aberta.reserva_id:
             reserva = session.get(Reserva, sessao_aberta.reserva_id)
@@ -1826,47 +1929,50 @@ def checkout_forcado(
     precisa de ser encerrado manualmente sem sucesso.
     """
     try:
+        eq = session.get(Equipamento, equipamento_id)
+        if not eq:
+            raise HTTPException(status_code=404, detail="Equipamento não encontrado.")
+
         sessao_aberta = session.exec(
             select(SessaoUso).where(
                 SessaoUso.equipamento_id == equipamento_id,
                 SessaoUso.fim.is_(None),
             )
         ).first()
-        if not sessao_aberta:
-            raise HTTPException(status_code=404, detail="Não existe sessão ativa para este equipamento.")
 
-        # Só o operador da sessão ou um admin pode forçar o término.
-        if (
-            sessao_aberta.utilizador_id
-            and sessao_aberta.utilizador_id != utilizador_atual.id
-            and utilizador_atual.role != RoleUtilizador.ADMIN
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail="Apenas o operador da sessão (ou admin) pode forçar término.",
-            )
+        if sessao_aberta:
+            # Só o operador da sessão ou um admin pode forçar o término.
+            if (
+                sessao_aberta.utilizador_id
+                and sessao_aberta.utilizador_id != utilizador_atual.id
+                and utilizador_atual.role != RoleUtilizador.ADMIN
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Apenas o operador da sessão (ou admin) pode forçar término.",
+                )
 
-        sessao_aberta.fim = datetime.utcnow()
-        session.add(sessao_aberta)
+            sessao_aberta.fim = _agora_utc()
+            sessao_aberta.termino_forcado = True
+            sessao_aberta.valida_para_stats = False
+            session.add(sessao_aberta)
 
-        # Penaliza qualidade no OEE quando o término é forçado.
-        if sessao_aberta.reserva_id:
-            reserva = session.get(Reserva, sessao_aberta.reserva_id)
-            if reserva:
-                reserva.concluido_com_sucesso = False
-                session.add(reserva)
+            # Penaliza qualidade no OEE quando o término é forçado.
+            if sessao_aberta.reserva_id:
+                reserva = session.get(Reserva, sessao_aberta.reserva_id)
+                if reserva:
+                    reserva.concluido_com_sucesso = False
+                    session.add(reserva)
 
-        eq = session.get(Equipamento, equipamento_id)
-        if eq:
-            eq.estado_atual = EstadoEquipamento.DISPONIVEL.value
-            session.add(eq)
+        # Resetar o hardware independentemente de existir sessão ativa.
+        eq.estado_atual = EstadoEquipamento.DISPONIVEL.value
+        session.add(eq)
 
         _persistir_sessao(session, "Falha ao forçar término da sessão")
-        session.refresh(sessao_aberta)
         return {
-            "mensagem": "Término forçado com sucesso. Equipamento libertado e OEE atualizado.",
-            "sessao": sessao_aberta,
-            "concluido_com_sucesso": False,
+            "status": "sucesso",
+            "mensagem": "Equipamento libertado com sucesso.",
+            "sessao_fechada": sessao_aberta is not None,
         }
 
     except HTTPException:
@@ -1949,7 +2055,7 @@ def calcular_eficiencia(
     """
     _ = utilizador_atual
     dias = _validar_dias(dias)
-    limite = datetime.utcnow() - timedelta(days=dias)
+    limite = _agora_utc() - timedelta(days=dias)
 
     reservas = session.exec(
         select(Reserva).where(
@@ -2015,23 +2121,18 @@ def registar_avaria(
     session.refresh(eq)
     return {"mensagem": "Avaria registada com sucesso", "estado_atual": eq.estado_atual, "avaria": avaria}
 
-@app.patch("/avarias/{avaria_id}/resolver")
-def resolver_avaria(
-    avaria_id: int,
-    dados: AvariaResolve,
-    session: Session = Depends(get_session),
-    admin: Utilizador = Depends(exigir_admin),
-) -> dict[str, Any]:
-    _ = admin
+def _resolver_avaria_logica(avaria_id: int, dados: AvariaResolve, session: Session) -> dict[str, Any]:
     avaria = session.get(Avaria, avaria_id)
     if not avaria:
         raise HTTPException(status_code=404, detail="Avaria não encontrada")
     if avaria.resolvida:
         raise HTTPException(status_code=400, detail="Avaria já estava resolvida")
     avaria.resolvida = True
-    avaria.data_resolucao = datetime.utcnow()
-    if dados.notas_resolucao:
-        avaria.notas_resolucao = dados.notas_resolucao
+    avaria.data_resolucao = _agora_utc()
+    if dados.relatorio_tecnico:
+        avaria.notas_resolucao = dados.relatorio_tecnico
+    if dados.custo is not None:
+        avaria.custo_reparacao = dados.custo
     outras_abertas = session.exec(
         select(Avaria).where(
             Avaria.equipamento_id == avaria.equipamento_id,
@@ -2048,6 +2149,26 @@ def resolver_avaria(
     _persistir_sessao(session, "Falha ao resolver avaria")
     session.refresh(avaria)
     return {"mensagem": "Avaria resolvida com sucesso", "avaria": avaria}
+
+@app.patch("/avarias/{avaria_id}/resolver")
+def resolver_avaria(
+    avaria_id: int,
+    dados: AvariaResolve,
+    session: Session = Depends(get_session),
+    admin: Utilizador = Depends(exigir_admin),
+) -> dict[str, Any]:
+    _ = admin
+    return _resolver_avaria_logica(avaria_id, dados, session)
+
+@app.put("/avarias/{avaria_id}/resolver")
+def resolver_avaria_put(
+    avaria_id: int,
+    dados: AvariaResolve,
+    session: Session = Depends(get_session),
+    admin: Utilizador = Depends(exigir_admin),
+) -> dict[str, Any]:
+    _ = admin
+    return _resolver_avaria_logica(avaria_id, dados, session)
 
 @app.get("/avarias")
 def listar_todas_avarias(resolvida: Optional[bool] = None, session: Session = Depends(get_session)):
@@ -2103,7 +2224,7 @@ def exportar_avarias_pdf(
 
     linhas = [
         f"Total de avarias: {len(avarias)}",
-        f"Gerado em: {datetime.utcnow().strftime('%d/%m/%Y %H:%M')} (UTC)",
+        f"Gerado em: {_agora_utc().strftime('%d/%m/%Y %H:%M')} (UTC)",
         "",
     ]
 
@@ -2124,7 +2245,7 @@ def exportar_avarias_pdf(
         ])
 
     ficheiro_pdf = _gerar_pdf_texto("Relatorio de Avarias", linhas)
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    timestamp = _agora_utc().strftime("%Y%m%d-%H%M%S")
 
     return Response(
         content=ficheiro_pdf,
@@ -2216,7 +2337,7 @@ def listar_todas_calibracoes(session: Session = Depends(get_session)):
 @app.get("/calibracoes/proximas")
 def calibracoes_proximas(dias: int = 30, session: Session = Depends(get_session)):
     dias = _validar_dias(dias)
-    limite = datetime.utcnow() + timedelta(days=dias)
+    limite = _agora_utc() + timedelta(days=dias)
     return session.exec(
         select(Calibracao).where(
             Calibracao.proxima_data.is_not(None),
@@ -2274,8 +2395,8 @@ def listar_reservas(session: Session = Depends(get_session)):
     return [
         {
             **r,
-            "data_inicio": r["data_inicio"].isoformat(),
-            "data_fim": r["data_fim"].isoformat(),
+            "data_inicio": _iso_z(r["data_inicio"]),
+            "data_fim": _iso_z(r["data_fim"]),
         }
         for r in reservas
     ]
@@ -2288,7 +2409,7 @@ def exportar_reservas_pdf(session: Session = Depends(get_session)):
 
     linhas = [
         f"Total de reservas: {len(reservas_ordenadas)}",
-        f"Gerado em: {datetime.utcnow().strftime('%d/%m/%Y %H:%M')} (UTC)",
+        f"Gerado em: {_agora_utc().strftime('%d/%m/%Y %H:%M')} (UTC)",
         "",
     ]
 
@@ -2307,7 +2428,7 @@ def exportar_reservas_pdf(session: Session = Depends(get_session)):
         ])
 
     ficheiro_pdf = _gerar_pdf_texto("Relatorio de Reservas", linhas)
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    timestamp = _agora_utc().strftime("%Y%m%d-%H%M%S")
 
     return Response(
         content=ficheiro_pdf,
@@ -2326,7 +2447,7 @@ def exportar_planeamento_pdf(session: Session = Depends(get_session)):
 
     linhas = [
         f"Total de blocos planeados: {len(reservas_ordenadas)}",
-        f"Gerado em: {datetime.utcnow().strftime('%d/%m/%Y %H:%M')} (UTC)",
+        f"Gerado em: {_agora_utc().strftime('%d/%m/%Y %H:%M')} (UTC)",
         "",
     ]
 
@@ -2342,7 +2463,7 @@ def exportar_planeamento_pdf(session: Session = Depends(get_session)):
         ])
 
     ficheiro_pdf = _gerar_pdf_texto("Relatorio de Planeamento Global", linhas)
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    timestamp = _agora_utc().strftime("%Y%m%d-%H%M%S")
 
     return Response(
         content=ficheiro_pdf,
@@ -2635,7 +2756,7 @@ def oee_global(
     """
     _ = admin
     dias = _validar_dias(dias)
-    limite = datetime.utcnow() - timedelta(days=dias)
+    limite = _agora_utc() - timedelta(days=dias)
     equipamentos = session.exec(select(Equipamento)).all()
 
     reservas_periodo = session.exec(
@@ -2671,67 +2792,233 @@ def oee_global(
         })
     return resultado
 
+@app.get("/stats/oee_summary", summary="Sumário OEE global e por equipamento para o Dashboard")
+def oee_summary(
+    dias: int = 30,
+    session: Session = Depends(get_session),
+    _: Utilizador = Depends(obter_utilizador_atual),
+) -> dict[str, Any]:
+    """
+    Sumário OEE para o Dashboard: valor global aggregado + lista individual.
+
+    Fórmula: OEE = min(Tempo_Real / Tempo_Planeado, 1) × 100
+    Limitamos a 1.0 (100%) para que overruns de planeamento não distorçam
+    artificialmente a métrica — o OEE mede eficiência, não horas extra.
+
+    Desvio_Planeamento = max(0, (Tempo_Real − Tempo_Planeado) / Tempo_Planeado × 100)
+    Exprime em % quanto o tempo real excedeu o planeado; é devolvido
+    separadamente como sinal de má gestão de planeamento.
+
+    Tratamento de divisão por zero:
+      Se Tempo_Planeado == 0 (sem reservas no período), ambos os campos
+      ficam None e o equipamento é excluído da média global.
+    """
+    dias = _validar_dias(dias)
+    limite = _agora_utc() - timedelta(days=dias)
+    equipamentos = session.exec(select(Equipamento)).all()
+
+    reservas_periodo = session.exec(
+        select(Reserva).where(Reserva.data_inicio >= limite)
+    ).all()
+    sessoes_periodo = session.exec(
+        select(SessaoUso).where(
+            SessaoUso.inicio >= limite,
+            SessaoUso.fim.is_not(None),
+            SessaoUso.valida_para_stats == True,
+        )
+    ).all()
+
+    reservas_por_eq: dict[int, list] = defaultdict(list)
+    for r in reservas_periodo:
+        reservas_por_eq[r.equipamento_id].append(r)
+
+    sessoes_por_eq: dict[int, list] = defaultdict(list)
+    for s in sessoes_periodo:
+        sessoes_por_eq[s.equipamento_id].append(s)
+
+    individual: list[dict[str, Any]] = []
+    oee_com_dados: list[float] = []
+
+    for eq in equipamentos:
+        reservas_eq = reservas_por_eq.get(eq.id, [])
+        sessoes_eq = sessoes_por_eq.get(eq.id, [])
+
+        # Tempo_Planeado = soma das durações das reservas no período (segundos)
+        tempo_planeado_s = sum(
+            (r.data_fim - r.data_inicio).total_seconds() for r in reservas_eq
+        )
+
+        # Tempo_Real = soma das durações das sessões de uso concluídas (segundos)
+        tempo_real_s = sum(
+            (s.fim - s.inicio).total_seconds() for s in sessoes_eq if s.fim is not None
+        )
+
+        oee_pct: float | None = _calcular_oee_temporal(tempo_real_s, tempo_planeado_s)
+        if oee_pct is not None:
+            # Desvio = max(0, ratio − 1) × 100 — só positivo quando há overrun de tempo
+            ratio = tempo_real_s / tempo_planeado_s
+            desvio_pct: float | None = round(max(0.0, ratio - 1.0) * 100, 1)
+            oee_com_dados.append(oee_pct)
+        else:
+            desvio_pct = None
+
+        individual.append({
+            "id": eq.id,
+            "nome": eq.nome,
+            "codigo": eq.codigo,
+            "estado_atual": eq.estado_atual,
+            "oee_pct": oee_pct,
+            "desvio_planeamento_pct": desvio_pct,
+            "tempo_planeado_h": round(tempo_planeado_s / 3600, 2),
+            "tempo_real_h": round(tempo_real_s / 3600, 2),
+            "total_reservas": len(reservas_eq),
+        })
+
+    # Média global: sobre valores já limitados a 100% (overruns não inflacionam)
+    oee_global = round(sum(oee_com_dados) / len(oee_com_dados), 1) if oee_com_dados else None
+
+    return {
+        "oee_global": oee_global,
+        # Disponibilidade ≡ OEE nesta fase (Qualidade e Performance assumidos = 100%)
+        "disponibilidade_global": oee_global,
+        "performance_global": 100.0,
+        "qualidade_global": 100.0,
+        "individual": individual,
+    }
+
+
+@app.post("/admin/stats/limpar-sessoes-invalidas", summary="Marcar sessões históricas inválidas para OEE")
+def limpar_sessoes_invalidas(
+    session: Session = Depends(get_session),
+    utilizador_atual: Utilizador = Depends(exigir_pin_alterado),
+) -> dict[str, Any]:
+    """
+    Script de limpeza único: percorre todas as sessões fechadas e marca
+    valida_para_stats=False nas que sejam inválidas (duração < 300s, término
+    forçado já registado, ou sessões abertas há mais de 24h sem fim registado).
+
+    Apenas administradores podem executar este endpoint.
+    """
+    if utilizador_atual.role != RoleUtilizador.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas administradores podem executar esta operação.")
+
+    agora = _agora_utc()
+    limite_orfas = agora - timedelta(hours=24)
+
+    # Fechar e invalidar sessões órfãs abertas há mais de 24h
+    sessoes_orfas = session.exec(
+        select(SessaoUso).where(
+            SessaoUso.fim.is_(None),
+            SessaoUso.inicio <= limite_orfas,
+        )
+    ).all()
+    invalidadas_orfas = 0
+    for s in sessoes_orfas:
+        s.fim = agora
+        s.termino_forcado = True
+        s.valida_para_stats = False
+        session.add(s)
+        invalidadas_orfas += 1
+
+    # Reclassificar sessões fechadas que ainda não têm o campo calculado
+    # (sessões antigas criadas antes desta migração têm valida_para_stats=True por omissão)
+    sessoes_fechadas = session.exec(
+        select(SessaoUso).where(
+            SessaoUso.fim.is_not(None),
+            SessaoUso.valida_para_stats == True,
+        )
+    ).all()
+    invalidadas_curtas = 0
+    for s in sessoes_fechadas:
+        if s.termino_forcado or (s.fim - s.inicio).total_seconds() < 300:
+            s.valida_para_stats = False
+            session.add(s)
+            invalidadas_curtas += 1
+
+    try:
+        session.commit()
+    except SQLAlchemyError as exc:
+        session.rollback()
+        logger.exception("Erro ao limpar sessões inválidas")
+        raise HTTPException(status_code=503, detail="Falha ao limpar sessões inválidas") from exc
+
+    total = invalidadas_orfas + invalidadas_curtas
+    logger.info("Limpeza OEE: %d sessões órfãs fechadas, %d sessões curtas/forçadas invalidadas", invalidadas_orfas, invalidadas_curtas)
+    return {
+        "mensagem": f"{total} sessões marcadas como inválidas para OEE.",
+        "sessoes_orfas_fechadas": invalidadas_orfas,
+        "sessoes_curtas_ou_forcadas": invalidadas_curtas,
+        "total_invalidadas": total,
+    }
+
+
 @app.get("/metricas/oee/{equipamento_id}", summary="OEE específico para um equipamento")
 def oee_equipamento(
     equipamento_id: int,
     dias: int = 30,
     session: Session = Depends(get_session),
-    admin: Utilizador = Depends(exigir_admin),
+    _: Utilizador = Depends(obter_utilizador_atual),
 ) -> dict[str, Any]:
     """
-    Calcula o OEE (Overall Equipment Effectiveness) específico para um equipamento.
-    
-    Porquê: A métrica de OEE permite aos gestores avaliar a eficiência operacional
-    de cada equipamento, identificar gargalos e justificar investimentos em manutenção
-    ou calibração.
-    
-    Cálculo: OEE = (reservas com sucesso / total de reservas) * 100%
-    
+    Calcula o OEE temporal de um equipamento individual.
+
+    Fórmula: OEE = min(Tempo_Real / Tempo_Planeado, 1) × 100
+    Usando _calcular_oee_temporal — mesma lógica do /stats/oee_summary.
+
+    Também devolve taxa_sucesso_planeamento_pct (reservas concluídas / total),
+    que é uma métrica complementar de qualidade do planeamento, distinta do OEE.
+
     Args:
         equipamento_id: ID do equipamento para análise.
         dias: Janela de análise em dias (máx 365).
-    
+
     Returns:
-        dict com métricas de OEE, taxa de sucesso e contagens.
+        dict com oee_pct temporal, taxa_sucesso_planeamento_pct e tempos.
     """
-    
-    _ = admin
     dias = _validar_dias(dias)
-    limite = datetime.utcnow() - timedelta(days=dias)
+    limite = _agora_utc() - timedelta(days=dias)
 
     eq = _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
-    
-    # Obter reservas do equipamento no período
+
     reservas = session.exec(
         select(Reserva).where(
             Reserva.equipamento_id == equipamento_id,
             Reserva.data_inicio >= limite,
         )
     ).all()
-    
-    if not reservas:
-        return {
-            "equipamento_id": equipamento_id,
-            "equipamento_nome": eq.nome,
-            "oee_pct": 0.0,
-            "taxa_sucesso_pct": 0.0,
-            "total_reservas": 0,
-            "reservas_sucesso": 0,
-            "periodo_dias": dias,
-            "desde": limite.isoformat(),
-        }
-    
-    # Contar reservas com sucesso (concluido_com_sucesso = True)
+
+    sessoes = session.exec(
+        select(SessaoUso).where(
+            SessaoUso.equipamento_id == equipamento_id,
+            SessaoUso.inicio >= limite,
+            SessaoUso.fim.is_not(None),
+        )
+    ).all()
+
+    tempo_planeado_s = sum(
+        (r.data_fim - r.data_inicio).total_seconds() for r in reservas
+    )
+    tempo_real_s = sum(
+        (s.fim - s.inicio).total_seconds() for s in sessoes if s.fim is not None
+    )
+
+    oee_pct = _calcular_oee_temporal(tempo_real_s, tempo_planeado_s)
+
+    # Taxa de sucesso de planeamento: reservas concluídas / total (métrica distinta do OEE)
     reservas_sucesso = [r for r in reservas if r.concluido_com_sucesso is True]
-    taxa_sucesso = len(reservas_sucesso) / len(reservas) * 100 if reservas else 0
-    
+    taxa_sucesso_planeamento = (
+        len(reservas_sucesso) / len(reservas) * 100 if reservas else 0.0
+    )
+
     return {
         "equipamento_id": equipamento_id,
         "equipamento_nome": eq.nome,
-        "oee_pct": round(taxa_sucesso, 2),
-        "taxa_sucesso_pct": round(taxa_sucesso, 2),
+        "oee_pct": oee_pct if oee_pct is not None else 0.0,
+        "taxa_sucesso_planeamento_pct": round(taxa_sucesso_planeamento, 2),
+        "tempo_planeado_h": round(tempo_planeado_s / 3600, 2),
+        "tempo_real_h": round(tempo_real_s / 3600, 2),
         "total_reservas": len(reservas),
         "reservas_sucesso": len(reservas_sucesso),
         "periodo_dias": dias,
-        "desde": limite.isoformat(),
+        "desde": _iso_z(limite),
     }

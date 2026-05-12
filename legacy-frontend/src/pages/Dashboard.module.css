@@ -2,16 +2,20 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-top: 0;
+  margin-bottom: 24px;
+  padding-top: 24px;
+  padding-left: 36px;
+  padding-right: 36px;
 }
 
 .title {
   font-family: var(--font-display);
-  font-size: 36px;
+  font-size: 2.2rem;
   font-weight: 700;
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-  margin-top: 6px;
+  letter-spacing: -0.025em;
+  color: var(--red);
+  margin-top: 0;
 }
 
 .subtitle {
@@ -27,19 +31,51 @@
   padding-top: 8px;
 }
 
-.quickAction {
+.actionGroup {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.btnExportPdf {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border: 1px solid var(--red);
   background: var(--red);
   color: #fff;
   font-family: var(--font-mono);
   font-size: 11px;
-  letter-spacing: 0.04em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   border-radius: 8px;
-  padding: 8px 12px;
+  padding: 10px 16px;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+  box-shadow: 0 1px 4px rgba(200, 16, 46, 0.25);
 }
 
-.quickAction:hover {
+.btnExportPdf:hover {
   background: var(--red-strong);
+  box-shadow: 0 2px 8px rgba(200, 16, 46, 0.35);
+}
+
+.btnShare {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border-bright);
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 8px;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.btnShare:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border);
 }
 
 .heroGrid {
@@ -51,11 +87,12 @@
 
 .heroCard,
 .alertCard {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 18px 20px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  background: #ffffff;
+  border: none;
+  border-radius: 16px;
+  padding: 32px;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  margin-bottom: 14px;
 }
 
 .heroTop {
@@ -68,7 +105,7 @@
 .heroLabel {
   font-family: var(--font-mono);
   color: var(--text-dim);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   font-size: 10px;
 }
@@ -117,7 +154,7 @@
   text-transform: uppercase;
   color: var(--text-dim);
   font-size: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 20px;
 }
 
 .alertNumbers {
@@ -161,18 +198,18 @@
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .kpiItem {
   background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
+  border: none;
+  border-radius: 12px;
+  padding: 32px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
 }
 
 .kpiLabel {
@@ -195,19 +232,33 @@
 
 /* Section */
 .section {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 20px 24px;
-  margin-bottom: 14px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  background: #ffffff;
+  border: none;
+  border-radius: 16px;
+  padding: 32px;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
 }
 
 .sectionHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+}
+
+.sectionHeader :global(.label) {
+  color: var(--red);
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-size: 14px;
+}
+
+.section :global(.label) {
+  color: var(--red);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-size: 14px;
 }
 
 .sectionActions {
@@ -308,9 +359,9 @@
 
 .barFill {
   height: 100%;
-  background: linear-gradient(90deg, var(--red), #e11d48);
+  /* sem gradient aqui — cor injetada via style={{ background: '...' }} no JSX */
   border-radius: 2px;
-  transition: width 0.5s ease;
+  transition: width 0.5s ease, background 0.3s ease;
 }
 
 .barCount {
@@ -321,10 +372,11 @@
 }
 
 .calendarWrap {
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px;
+  background: #ffffff;
+  border: none;
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
 }
 
 .calendarScroller {
@@ -357,6 +409,11 @@
   border-color: rgba(200,16,46,0.35) !important;
 }
 
+/* Estilo FullCalendar com linhas suaves */
+.calendarWrap :global(.fc-timegrid-slot) { border-top-color: #f3f4f6 !important; }
+.calendarWrap :global(.fc-col-header-cell) { border-bottom-color: #e5e7eb !important; border-right-color: transparent !important; }
+.calendarWrap :global(.fc-resource-area) { border-right-color: #e5e7eb !important; }
+.calendarWrap :global(.fc-timegrid-body) { border-top-color: #e5e7eb !important; }
 /* Table */
 .table {
   width: 100%;
@@ -366,19 +423,21 @@
 
 .table th {
   text-align: left;
-  padding: 8px 12px;
+  padding: 12px 16px;
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-dim);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #e5e7eb;
+  border-right: none;
   font-weight: 400;
 }
 
 .table td {
-  padding: 12px 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  border-right: none;
   vertical-align: middle;
 }
 
@@ -510,6 +569,78 @@
   to { transform: scale(1); opacity: 1; }
 }
 
+/* ── OEE Global Section ── */
+.oeeSection {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.oeeCard {
+  background: #ffffff;
+  border: none;
+  border-radius: 16px;
+  padding: 32px;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+
+.oeeCardLabel {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 10px;
+  margin-bottom: 16px;
+}
+
+.oeeCardMain {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.oeeCardValue {
+  font-family: var(--font-display);
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.oeeCardSub {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+/* Mini-Meter: barra de progresso linear fina (6px) */
+.miniMeter {
+  height: 6px;
+  border-radius: 3px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.miniMeterFill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease, background 0.3s ease;
+}
+
+/* Tabela OEE — scroll interno para suportar 30+ equipamentos */
+.oeeTableWrap {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+/* Cabeçalho fixo quando a tabela faz scroll */
+.oeeTableWrap thead th {
+  position: sticky;
+  top: 0;
+  background: #ffffff;
+  z-index: 1;
+}
+
 @media (max-width: 1100px) {
   .heroGrid,
   .dualGrid {
@@ -517,6 +648,24 @@
   }
   .kpiRow {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .oeeSection {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media print {
+  :global(.sidebar),
+  :global(.nav),
+  :global(.no-print),
+  .actionGroup {
+    display: none !important;
+  }
+
+  :global(.mainContent) {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
   }
 }
 

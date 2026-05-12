@@ -10,9 +10,9 @@
 .sidebar {
   width: 240px;
   flex-shrink: 0;
-  background: var(--bg-panel);
-  border-right: 1px solid var(--border);
-  border: 1px solid var(--border);
+  background: #ffffff;
+  border-right: 1px solid #e5e7eb;
+  border: 1px solid #e5e7eb;
   border-radius: 16px;
   display: flex;
   flex-direction: column;
@@ -22,34 +22,46 @@
 }
 
 .sidebar::after {
-  content: '';
-  position: absolute;
-  top: 16px;
-  right: -10px;
-  width: 10px;
-  height: calc(100% - 32px);
-  border-radius: 999px;
-  background: linear-gradient(to bottom, rgba(200,16,46,0.26), rgba(200,16,46,0.06));
+  content: none;
 }
 
 .logo {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px 20px 20px;
-  border-bottom: 1px dashed var(--border);
+  padding: 40px 20px 20px;
+  border-bottom: 1px dashed #e5e7eb;
   margin-bottom: 8px;
 }
 
 .logoLink {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   width: 100%;
   padding: 0;
   border: 0;
   background: transparent;
   cursor: pointer;
+}
+
+.logoImage {
+  width: 150px;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  filter: none;
+}
+
+.departmentName {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: #6b7280;
+  margin-top: 10px;
 }
 
 .logoBrand {
@@ -100,7 +112,7 @@
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 12px;
   padding: 8px 12px;
   flex: 1;
 }
@@ -108,10 +120,10 @@
 .navItem {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 9px 12px;
   border-radius: 10px;
-  color: var(--text-secondary);
+  color: #4b5563;
   font-size: 13px;
   font-weight: 500;
   transition: all var(--transition);
@@ -119,31 +131,43 @@
 }
 
 .navItem:hover {
-  background: var(--bg-hover);
-  color: var(--red);
+  background-color: rgba(211, 10, 36, 0.04);
+  color: #111827;
+  transition: all 0.2s ease-in-out;
 }
 
 .navItem.active {
-  background: var(--red-glow);
-  border-color: rgba(200,16,46,0.35);
-  color: var(--red);
+  background: #d30a24;
+  border-color: #d30a24;
+  color: #ffffff;
 }
 
 .navIcon {
-  font-size: 10px;
-  width: 22px;
-  text-align: center;
-  font-family: var(--font-mono);
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 2px 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-secondary);
+  transition: color 160ms ease, filter 160ms ease, transform 160ms ease;
+  border: none;
+  padding: 0;
+}
+
+.navItem:hover .navIcon {
+  color: var(--text-primary);
+  filter: drop-shadow(0 6px 12px rgba(0,0,0,0.06));
+  transform: translateY(-1px);
+}
+
+.navItem.active .navIcon {
+  color: #ffffff;
+  filter: none;
 }
 
 .sidebarFooter {
   padding: 16px 20px;
-  border-top: 1px dashed var(--border);
+  border-top: 1px dashed #e5e7eb;
   display: grid;
   gap: 10px;
 }
@@ -180,19 +204,20 @@
 .main {
   flex: 1;
   overflow-y: auto;
-  background: transparent;
+  background: #f1f5f9;
   border: 1px solid var(--border);
   border-radius: 16px;
-  backdrop-filter: blur(2px);
   min-width: 0;
 }
 
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 10;
-  padding: 18px 22px 0;
-  backdrop-filter: blur(10px);
+  z-index: 50;
+  width: 100%;
+  padding: 0;
+  background-color: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .sessionPanel {
@@ -202,11 +227,10 @@
   gap: 18px;
   padding: 16px 18px;
   border: 1px solid var(--border);
-  border-radius: 16px;
-  background:
-    linear-gradient(135deg, rgba(255,255,255,0.92), rgba(246,247,251,0.96)),
-    linear-gradient(90deg, rgba(200,16,46,0.08), transparent);
-  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.06);
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: none;
+  width: 100%;
 }
 
 .sessionIdentity {

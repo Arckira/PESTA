@@ -4,6 +4,15 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import ptLocale from '@fullcalendar/core/locales/pt'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faCalendarDays as faCalendar,
+  faClock,
+  faFolderOpen,
+  faNoteSticky,
+  faScrewdriverWrench as faTools,
+  faUser,
+} from '@fortawesome/free-solid-svg-icons'
 import { History } from 'lucide-react'
 import { useToast } from '../components/ToastProvider.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
@@ -23,7 +32,7 @@ export default function Reservas({startOpenModal = false}) {
 
   // Modal nova reserva
   const [modal, setModal] = useState(startOpenModal)
-  const [form, setForm] = useState({ equipamento_id: '', utilizador_id: '', projeto: '', data_inicio: '', data_fim: '', notas: '' })
+  const [form, setForm] = useState({ equipamento_id: '', utilizador_id: '', projeto: '', metodo: '', data_inicio: '', data_fim: '', notas: '' })
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [formErro, setFormErro] = useState('')
@@ -66,6 +75,7 @@ export default function Reservas({startOpenModal = false}) {
       equipamento_id: preenchimento.equipamento_id || '',
       utilizador_id: '',
       projeto: '',
+      metodo: '',
       data_inicio: preenchimento.data_inicio || '',
       data_fim: preenchimento.data_fim || '',
       notas: ''
@@ -139,13 +149,14 @@ export default function Reservas({startOpenModal = false}) {
         equipamento_id: parseInt(form.equipamento_id),
         utilizador_id:  parseInt(form.utilizador_id),
         projeto:        form.projeto || null,
+        metodo:         form.metodo || null,
         data_inicio:    new Date(form.data_inicio).toISOString(),
         data_fim:       new Date(form.data_fim).toISOString(),
         notas:          form.notas || null,
       })
       toast.success('Reserva criada com sucesso.')
       setModal(false)
-      setForm({ equipamento_id: '', utilizador_id: '', projeto: '', data_inicio: '', data_fim: '', notas: '' })
+      setForm({ equipamento_id: '', utilizador_id: '', projeto: '', metodo: '', data_inicio: '', data_fim: '', notas: '' })
     } catch (e) {
       setFormErro(e.message)
       toast.error(e.message || 'Não foi possível criar a reserva.')
@@ -230,7 +241,7 @@ export default function Reservas({startOpenModal = false}) {
             return (
               <div
                 className={`${styles.reservaBadge}${ev.esta_ativa ? ` ${styles.reservaBadgeAtiva}` : ''}`}
-                style={{ backgroundColor: corDoUtilizador(ev.utilizador_id) }}
+                style={{ background: 'none', border: 'none', color: '#fff' }}
               >
                 {iniciais}
               </div>
@@ -244,7 +255,6 @@ export default function Reservas({startOpenModal = false}) {
             const periodo = `${pad(start.getHours())}:${pad(start.getMinutes())} - ${pad(end.getHours())}:${pad(end.getMinutes())}`
             info.el.style.overflow = 'visible'
             if (ev.tipo === 'planeado') {
-              info.el.style.opacity = '0.45'
               info.el.setAttribute('title', `[PLANEADO] ${ev.utilizador_nome}\n${ev.equipamento_nome}\n${periodo}`)
             } else if (ev.tipo === 'real') {
               info.el.style.borderWidth = '2px'
@@ -263,12 +273,12 @@ export default function Reservas({startOpenModal = false}) {
 
       <div className={styles.legenda}>
         <span className={styles.legendaItem}>
-          <span className={styles.legendaDot} data-tipo="planeado" />
-          Planeado
+          <span className={styles.legendaDotFaded} />
+          Cor desvanecida = Reserva Planeada
         </span>
         <span className={styles.legendaItem}>
-          <span className={styles.legendaDot} data-tipo="ativo" />
-          Em curso / Realizado
+          <span className={styles.legendaDotSolid} />
+          Cor sólida = Check-in Ativo / Em Curso
         </span>
       </div>
 
@@ -416,23 +426,24 @@ export default function Reservas({startOpenModal = false}) {
               </div>
             </div>
             <div className={styles.hourRule}>Reservas em blocos de 1 hora (hora cheia).</div>
+            <div style={{
+              padding: '10px 12px',
+              backgroundColor: '#fef3c7',
+              border: '1px solid #fcd34d',
+              borderRadius: '4px',
+              fontSize: '13px',
+              color: '#92400e',
+              marginBottom: '16px'
+            }}>
+              ℹ️ Equipamentos avariados não estão disponíveis para reserva.
+            </div>
 
             <div className={styles.fields}>
               <label className={styles.field}>
-                <span className="label">Equipamento *</span>
-                <select className={styles.input} value={form.equipamento_id} onChange={e => setForm(f => ({ ...f, equipamento_id: e.target.value }))}>
-                  <option value="">Selecionar equipamento…</option>
-                  {equipamentos.map(eq => (
-                    <option key={eq.id} value={eq.id} disabled={eq.estado_atual === 'Avariado'}>
-                      {eq.codigo} — {eq.nome}
-                      {eq.estado_atual === 'Avariado' ? ' (Interdito)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className={styles.field}>
-                <span className="label">Utilizador *</span>
+                <span className={styles.fieldLabel}>
+                  <FontAwesomeIcon icon={faUser} className={styles.fieldIcon} aria-hidden="true" />
+                  Utilizador *
+                </span>
                 <select
                   className={styles.input}
                   value={form.utilizador_id}
@@ -448,52 +459,98 @@ export default function Reservas({startOpenModal = false}) {
               </label>
 
               <label className={styles.field}>
-                <span className="label">Projeto (opcional)</span>
+                <span className={styles.fieldLabel}>
+                  <FontAwesomeIcon icon={faFolderOpen} className={styles.fieldIcon} aria-hidden="true" />
+                  Projeto (opcional)
+                </span>
                 <input className={styles.input} value={form.projeto} onChange={e => setForm(f => ({ ...f, projeto: e.target.value }))} placeholder="ex: Projeto X — Lote 42" />
               </label>
 
-              <div className={styles.row}>
-                <label className={styles.field}>
-                  <span className="label">Data Início *</span>
-                  <input
-                    type="datetime-local"
-                    step="3600"
-                    className={styles.input}
-                    value={form.data_inicio}
-                    onChange={e => setForm(f => ({ ...f, data_inicio: e.target.value }))}
-                  />
-                </label>
-                <label className={styles.field}>
-                  <span className="label">Data Fim *</span>
-                  <input
-                    type="datetime-local"
-                    step="3600"
-                    className={styles.input}
-                    value={form.data_fim}
-                    onChange={e => setForm(f => ({ ...f, data_fim: e.target.value }))}
-                  />
-                </label>
-              </div>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>
+                  <FontAwesomeIcon icon={faTools} className={styles.fieldIcon} aria-hidden="true" />
+                  Método de Ensaio (opcional)
+                </span>
+                <input className={styles.input} value={form.metodo} onChange={e => setForm(f => ({ ...f, metodo: e.target.value }))} placeholder="ex: Norma ISO 16750" />
+              </label>
 
-              <div className={styles.quickHours}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span className="label">Duração rápida</span>
-                  <div className={styles.infoWrapSmall}>
-                    <span className={styles.infoIconSmall}>i</span>
-                    <div className={styles.infoTooltip}>Adiciona horas à data de início (ex: 4h = +4 horas).</div>
+              <div className={styles.formGrid}>
+                <div className={styles.formColumn}>
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>
+                      <FontAwesomeIcon icon={faTools} className={styles.fieldIcon} aria-hidden="true" />
+                      Equipamento *
+                    </span>
+                    <select className={styles.input} value={form.equipamento_id} onChange={e => setForm(f => ({ ...f, equipamento_id: e.target.value }))}>
+                      <option value="">Selecionar equipamento…</option>
+                      {equipamentos
+                        .filter(eq => eq.estado_atual !== 'Avariado')  // Filtrar equipamentos avariados
+                        .map(eq => (
+                        <option key={eq.id} value={eq.id}>
+                          {eq.codigo} — {eq.nome}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className={styles.row}>
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>
+                        <FontAwesomeIcon icon={faCalendar} className={styles.fieldIcon} aria-hidden="true" />
+                        Data Início *
+                      </span>
+                      <input
+                        type="datetime-local"
+                        step="3600"
+                        className={styles.input}
+                        value={form.data_inicio}
+                        onChange={e => setForm(f => ({ ...f, data_inicio: e.target.value }))}
+                      />
+                    </label>
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>
+                        <FontAwesomeIcon icon={faCalendar} className={styles.fieldIcon} aria-hidden="true" />
+                        Data Fim *
+                      </span>
+                      <input
+                        type="datetime-local"
+                        step="3600"
+                        className={styles.input}
+                        value={form.data_fim}
+                        onChange={e => setForm(f => ({ ...f, data_fim: e.target.value }))}
+                      />
+                    </label>
                   </div>
                 </div>
-                <div className={styles.quickHoursButtons}>
-                  <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(4)}>4h</button>
-                  <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(8)}>8h</button>
-                  <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(16)}>16h</button>
+
+                <div className={styles.formColumn}>
+                  <div className={styles.quickHours}>
+                    <div className={styles.quickHoursHeader}>
+                      <span className={styles.fieldLabel}>
+                        <FontAwesomeIcon icon={faClock} className={styles.fieldIcon} aria-hidden="true" />
+                        Duração estimada
+                      </span>
+                      <div className={styles.infoWrapSmall}>
+                        <span className={styles.infoIconSmall}>i</span>
+                        <div className={styles.infoTooltip}>Adiciona horas à data de início (ex: 4h = +4 horas).</div>
+                      </div>
+                    </div>
+                    <div className={styles.quickHoursButtons}>
+                      <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(4)}>4h</button>
+                      <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(8)}>8h</button>
+                      <button type="button" className={styles.quickBtn} onClick={() => setDuracaoHoras(16)}>16h</button>
+                    </div>
+                  </div>
+
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>
+                      <FontAwesomeIcon icon={faNoteSticky} className={styles.fieldIcon} aria-hidden="true" />
+                      Notas (opcional)
+                    </span>
+                    <textarea className={styles.textarea} rows={5} value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} />
+                  </label>
                 </div>
               </div>
-
-              <label className={styles.field}>
-                <span className="label">Notas (opcional)</span>
-                <textarea className={styles.textarea} rows={2} value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} />
-              </label>
             </div>
 
             {formErro && <div className={styles.formErro}>{formErro}</div>}

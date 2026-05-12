@@ -1,53 +1,52 @@
-import { NavLink, useNavigate } from 'react-router-dom'
-import { LogOut } from 'lucide-react'
+import { Link, NavLink } from 'react-router-dom'
+import { LogOut, LayoutDashboard, Microscope, CalendarCheck, AlertTriangle, Wrench, ClipboardCheck, Scale, Users } from 'lucide-react'
 import styles from './Layout.module.css'
 import UserMenu from './UserMenu.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
-import { getPostLoginPath, LOGIN_PATH, PUBLIC_PATHS } from '../contexts/authNavigation.js'
+import { PUBLIC_PATHS } from '../contexts/authNavigation.js'
+import labLogo from '../assets/industrial-testing-lab-logo.png'
 
 const NAV = [
-  { to: '/', icon: '⬡', label: 'Dashboard' },
-  { to: '/equipamentos', icon: '⚙', label: 'Equipamentos' },
-  { to: '/reservas', icon: '📄', label: 'Reservas' },
-  { to: '/avarias', icon: '⚠', label: 'Avarias' },
-  { to: '/manutencoes', icon: '🔧', label: 'Manutenções' },
-  { to: '/calibracoes', icon: '◍', label: 'Calibrações' },
-  { to: '/utilizadores', icon: '👤', label: 'Utilizadores' },
+  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/equipamentos', icon: Microscope, label: 'Equipamentos' },
+  { to: '/reservas', icon: CalendarCheck, label: 'Reservas' },
+  { to: '/avarias', icon: AlertTriangle, label: 'Avarias' },
+  { to: '/manutencoes', icon: Wrench, label: 'Manutenções' },
+  { to: '/verificacoes', icon: ClipboardCheck, label: 'Verificações' },
+  { to: '/calibracoes', icon: Scale, label: 'Calibrações' },
+  { to: '/utilizadores', icon: Users, label: 'Utilizadores' },
 ]
 
 export default function Layout({ children }) {
-  const navigate = useNavigate()
   const { user, logout, openAuthPrompt } = useAuth()
 
   const navItems = user ? NAV : NAV.filter(({ to }) => PUBLIC_PATHS.has(to))
-  const handleLogoClick = () => navigate(user ? getPostLoginPath(user) : LOGIN_PATH)
 
   return (
     <div className={styles.shell}>
       <aside className={styles.sidebar}>
         <div className={styles.logo}>
-          <button
-            type="button"
+          <Link
+            to="/"
             className={styles.logoLink}
             aria-label="Ir para o inicio"
-            onClick={handleLogoClick}
           >
-            <div className={styles.logoBrand}>
-              <div className={styles.logoMark}>INDUSTRIAL TESTING LAB</div>
-              <div className={styles.logoSub}>TESTING CENTRE</div>
-            </div>
-          </button>
+            <img src={labLogo} alt="Industrial Testing Lab" className={styles.logoImage} />
+            <span className={styles.departmentName}>Testing Centre</span>
+          </Link>
         </div>
 
         <nav className={styles.nav}>
-          {navItems.map(({ to, icon, label }) => (
+          {navItems.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
               end={to === '/'}
               className={({ isActive }) => `${styles.navItem} ${isActive ? styles.active : ''}`}
             >
-              <span className={styles.navIcon}>{icon}</span>
+              <span className={styles.navIcon} aria-hidden>
+                <Icon size={20} strokeWidth={1.5} />
+              </span>
               <span>{label}</span>
             </NavLink>
           ))}
@@ -62,7 +61,7 @@ export default function Layout({ children }) {
               onClick={logout}
               aria-label="Terminar sessão"
             >
-              <LogOut size={14} strokeWidth={2} />
+              <LogOut size={20} strokeWidth={1.5} />
               Sair
             </button>
           )}

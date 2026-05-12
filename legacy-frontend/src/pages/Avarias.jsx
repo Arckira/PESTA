@@ -28,7 +28,8 @@ export default function Avarias() {
 
   // Modal resolver
   const [modal, setModal] = useState(null) // avaria object
-  const [notas, setNotas] = useState('')
+  const [relatorio, setRelatorio] = useState('')
+  const [custo, setCusto] = useState('')
   const [saving, setSaving] = useState(false)
   const [sucesso, setSucesso] = useState('')
 
@@ -97,16 +98,24 @@ export default function Avarias() {
     if (!modal) return
     setSaving(true)
     try {
-      await api.resolverAvaria(modal.id, notas)
+      const custoNum = custo !== '' ? parseFloat(custo) : null
+      await api.resolverAvaria(modal.id, { relatorioTecnico: relatorio, custo: custoNum })
+      // Atualização imediata do estado local — sem esperar re-fetch
+      setAvarias(prev => prev.map(a =>
+        a.id === modal.id
+          ? { ...a, resolvida: true, data_resolucao: new Date().toISOString(), notas_resolucao: relatorio || null, custo_reparacao: custoNum }
+          : a
+      ))
       toast.success('Avaria resolvida com sucesso.')
       setSucesso('Avaria resolvida com sucesso!')
-      setTimeout(() => { setModal(null); setNotas(''); setSucesso(''); carregar() }, 1400)
+      setTimeout(() => { setModal(null); setRelatorio(''); setCusto(''); setSucesso('') }, 1200)
+      carregar()
     } catch (e) {
       toast.error(e.message || 'Não foi possível resolver a avaria.')
     } finally {
       setSaving(false)
     }
-  }, [modal, notas, carregar, toast])
+  }, [modal, relatorio, custo, carregar, toast])
 
   const abertas   = avarias.filter(a => !a.resolvida).length
   const resolvidas = avarias.filter(a => a.resolvida).length
@@ -144,7 +153,7 @@ export default function Avarias() {
         <td className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmt(av.data_resolucao)}</td>
         <td>
           {!av.resolvida && (
-            <button className={styles.btnResolver} onClick={() => { setModal(av); setNotas('') }}>
+            <button className={styles.btnResolver} onClick={() => { setModal(av); setRelatorio(''); setCusto('') }}>
               Resolver
             </button>
           )}
@@ -240,13 +249,26 @@ export default function Avarias() {
             ) : (
               <>
                 <label className={styles.fieldLabel}>
-                  <span className="label">Notas de Resolução (opcional)</span>
+                  <span className="label">Relatório Técnico (opcional)</span>
                   <textarea
                     className={styles.textarea}
                     rows={3}
-                    placeholder="Descreve o que foi feito para resolver o problema…"
-                    value={notas}
-                    onChange={e => setNotas(e.target.value)}
+                    placeholder="Descreve o diagnóstico e o que foi feito para resolver o problema…"
+                    value={relatorio}
+                    onChange={e => setRelatorio(e.target.value)}
+                  />
+                </label>
+                <label className={styles.fieldLabel} style={{ marginTop: 10 }}>
+                  <span className="label">Custo de Reparação (€)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className={styles.textarea}
+                    style={{ rows: undefined, height: 36, padding: '0 10px' }}
+                    placeholder="0.00"
+                    value={custo}
+                    onChange={e => setCusto(e.target.value)}
                   />
                 </label>
                 <p className={styles.aviso}>

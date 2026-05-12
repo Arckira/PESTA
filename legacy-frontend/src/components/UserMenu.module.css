@@ -4,24 +4,45 @@
 
 .trigger {
   width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-card);
-  padding: 8px 10px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  padding: 8px 0;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  cursor: pointer;
+  transition: all 160ms ease;
 }
 
-.initials {
-  font-family: var(--font-mono);
-  font-weight: 700;
-  background: rgba(255,255,255,0.03);
-  padding: 2px 6px;
-  border-radius: 6px;
-  font-size: 12px;
+.trigger:hover {
+  background: rgba(0, 0, 0, 0.02);
 }
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  color: var(--text-secondary);
+  transition: color 160ms ease;
+}
+
+.trigger:hover .avatar {
+  color: var(--text-primary);
+}
+
+.textContent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  flex: 1;
+}
+
+
 
 /* Tooltip styles */
 .tooltip {
@@ -48,32 +69,38 @@
 .wrap:hover .tooltip { display: block; }
 
 .name {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1;
 }
 
 .role {
-  font-size: 11px;
+  font-size: 10px;
   font-family: var(--font-mono);
-  color: var(--red-strong);
+  color: #d30a24;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
 }
 
 .dropdown {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: calc(100% + 8px);
+  left: -8px;
+  right: -8px;
+  bottom: calc(100% + 4px);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg-panel);
-  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.12);
-  padding: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+  padding: 12px;
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  z-index: 1000;
 }
 
 .meta {

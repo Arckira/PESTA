@@ -95,7 +95,7 @@ export default function LoginModal() {
       toast.success('Sessao iniciada com sucesso.')
       if (!data.utilizador.forcar_troca_pin) {
         // Se veio de scan QR ou de página protegida, redirecionar para esse destino
-        const destino = redirectPath || getPostLoginPath(data.utilizador)
+        const destino = redirectPath || location.state?.from || getPostLoginPath(data.utilizador)
         if (redirectPath) setRedirectPath(null)
         navigate(destino, { replace: true })
       }

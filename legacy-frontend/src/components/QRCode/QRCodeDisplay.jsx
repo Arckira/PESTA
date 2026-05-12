@@ -1,30 +1,18 @@
-import { useRef } from 'react'
+import { forwardRef, useImperativeHandle, useRef } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
-import { QR_FRONTEND_BASE } from '../../utils/config.js'
+import labLogo from '../../assets/industrial-testing-lab-logo.png'
 import styles from './QRCodeDisplay.module.css'
 
-/**
- * Componente de exibição e impressão de QR Code.
- *
- * Porquê QRCodeCanvas em vez de QRCodeSVG:
- *   O canvas permite extrair os dados como imagem PNG via toDataURL(),
- *   garantindo que a etiqueta impressa é idêntica ao ecrã,
- *   independentemente das folhas de estilo do browser.
- *
- * Porquê QR_FRONTEND_BASE do config.js:
- *   O URL no QR tem de ser o IP real da rede interna (ex: http://192.168.1.50:5173)
- *   para que o telemóvel consiga abrir a página — localhost não funciona fora do PC.
- */
-export default function QRCodeDisplay({ equipamento }) {
+const QRCodeDisplay = forwardRef(function QRCodeDisplay({ equipamento, value }, ref) {
   const canvasRef = useRef(null)
 
-  const url = `${QR_FRONTEND_BASE}/equipamentos/${equipamento.id}/reserva`
+  const url = value || `${window.location.origin}/equipamentos/${equipamento.id}`
 
   const handlePrint = () => {
     const canvas = canvasRef.current?.querySelector('canvas')
     const qrDataUrl = canvas ? canvas.toDataURL('image/png') : ''
 
-    const janela = window.open('', '_blank', 'width=420,height=580')
+    const janela = window.open('', '_blank', 'width=420,height=600')
     janela.document.write(`<!DOCTYPE html>
 <html>
 <head>
@@ -32,36 +20,48 @@ export default function QRCodeDisplay({ equipamento }) {
   <title>Etiqueta — ${equipamento.codigo}</title>
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:Arial,sans-serif;display:flex;justify-content:center;
-         align-items:center;min-height:100vh;background:#fff}
-    .etiqueta{border:2px solid #111;border-radius:8px;padding:20px 24px;
-               text-align:center;width:260px}
-    .industrial-testing-lab{font-size:11px;font-weight:700;letter-spacing:.15em;
-             color:#c8102e;margin-bottom:12px}
-    .codigo{font-size:24px;font-weight:700;letter-spacing:.1em;
-             font-family:'Courier New',monospace;margin-bottom:2px}
-    .nome{font-size:12px;color:#444;margin-bottom:16px;font-weight:500}
-    .tipo{font-size:11px;color:#777;margin-bottom:16px}
-    img.qr{width:180px;height:180px;display:block;margin:0 auto 12px}
-    .url{font-size:8px;color:#aaa;word-break:break-all;
-          font-family:'Courier New',monospace;margin-top:8px}
-    @media print{body{margin:0}}
+    @page{size:80mm 110mm;margin:0}
+    body{font-family:Arial,Helvetica,sans-serif;background:#fff;
+         display:flex;justify-content:center;align-items:flex-start;padding:5mm}
+    .etiqueta{border:2px solid #111;padding:14px 18px 16px;
+               text-align:center;width:68mm;background:#fff}
+    .header{display:flex;align-items:center;justify-content:center;gap:10px;
+            padding-bottom:10px;border-bottom:1px solid #ccc;margin-bottom:12px}
+    .logoImg{height:22px;width:auto}
+    .tc{font-size:8px;font-weight:800;letter-spacing:.22em;
+        text-transform:uppercase;color:#111;line-height:1.2}
+    img.qr{width:190px;height:190px;display:block;margin:0 auto 12px;
+           image-rendering:pixelated;image-rendering:crisp-edges}
+    hr{border:none;border-top:1px solid #ddd;margin:10px 0}
+    .codigo{font-size:22px;font-weight:900;letter-spacing:.08em;
+            color:#111;margin-bottom:4px;font-family:Arial,sans-serif}
+    .nome{font-size:10px;color:#222;font-weight:700;margin-bottom:3px;line-height:1.3}
+    .tipo{font-size:9px;color:#666;font-weight:500;margin-bottom:8px}
+    .url{font-size:6.5px;color:#bbb;word-break:break-all;
+          font-family:'Courier New',monospace;margin-top:4px}
+    @media print{body{padding:0}}
   </style>
 </head>
 <body>
   <div class="etiqueta">
-    <div class="industrial-testing-lab">INDUSTRIAL TESTING LAB · TESTING CENTRE</div>
+    <div class="header">
+      <img class="logoImg" src="${labLogo}" alt="Industrial Testing Lab">
+      <div class="tc">Testing<br>Centre</div>
+    </div>
+    <img class="qr" src="${qrDataUrl}" alt="QR Code">
+    <hr>
     <div class="codigo">${equipamento.codigo}</div>
     <div class="nome">${equipamento.nome}</div>
-    <div class="tipo">${equipamento.tipo} · ${equipamento.localizacao}</div>
-    <img class="qr" src="${qrDataUrl}" alt="QR Code">
+    <div class="tipo">${equipamento.tipo}</div>
     <div class="url">${url}</div>
   </div>
-  <script>window.onload=()=>{window.print();window.close()}<\/script>
+  <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),800)}<\/script>
 </body>
 </html>`)
     janela.document.close()
   }
+
+  useImperativeHandle(ref, () => ({ print: handlePrint }))
 
   return (
     <div className={styles.wrap}>
@@ -72,7 +72,7 @@ export default function QRCodeDisplay({ equipamento }) {
           <QRCodeCanvas
             value={url}
             size={160}
-            level="H"
+            level="M"
             includeMargin
             bgColor="#ffffff"
             fgColor="#111111"
@@ -92,4 +92,6 @@ export default function QRCodeDisplay({ equipamento }) {
       </p>
     </div>
   )
-}
+})
+
+export default QRCodeDisplay

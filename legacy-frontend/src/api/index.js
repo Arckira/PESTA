@@ -82,8 +82,8 @@ export const api = {
   atualizarEstado:        (id, novo_estado) => request(`/equipamentos/${id}/estado`, { method: 'PATCH', body: JSON.stringify({ novo_estado }) }),
 
   // ── Check-in / Check-out ──
-  iniciarCheckin:         (id, reserva_id = null, duracao_prevista_minutos = null) =>
-    request(`/equipamentos/${id}/checkin`, { method: 'POST', body: JSON.stringify({ reserva_id, duracao_prevista_minutos }) }),
+  iniciarCheckin:         (id, reserva_id = null, duracao_prevista_minutos = null, projeto = null, metodo = null) =>
+    request(`/equipamentos/${id}/checkin`, { method: 'POST', body: JSON.stringify({ reserva_id, duracao_prevista_minutos, projeto, metodo }) }),
   obterSessaoAtiva:       (id)          => request(`/equipamentos/${id}/sessao-ativa`),
   editarDuracaoSessao:    (id, duracao_prevista_minutos) =>
     request(`/equipamentos/${id}/sessao-ativa/duracao`, { method: 'PATCH', body: JSON.stringify({ duracao_prevista_minutos }) }),
@@ -110,7 +110,7 @@ export const api = {
     }
     return res.blob()
   },
-  resolverAvaria:         (id, notas)     => request(`/avarias/${id}/resolver`, { method: 'PATCH', body: JSON.stringify({ notas_resolucao: notas }) }),
+  resolverAvaria:         (id, { relatorioTecnico, custo } = {}) => request(`/avarias/${id}/resolver`, { method: 'PUT', body: JSON.stringify({ relatorio_tecnico: relatorioTecnico || null, custo: custo ?? null }) }),
 
   // ── Manutenções ──
   listarManutencoes:      (equipamentoId) => request(`/equipamentos/${equipamentoId}/manutencoes`),
@@ -160,4 +160,6 @@ export const api = {
 
   // ── Dashboard OEE ──
   oeeGlobal:              (dias = 30)     => request(`/dashboard/oee?dias=${dias}`),
+  oeeGlobalSummary:       (dias = 30)     => request(`/stats/oee_summary?dias=${dias}`),
+  oeeEquipamento:         (id, dias = 30) => request(`/metricas/oee/${id}?dias=${dias}`),
 }

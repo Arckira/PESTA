@@ -5,12 +5,51 @@ SQL Server 2022 Express, mantendo ao mesmo tempo compatibilidade suficiente
 com o MVP atual durante a transicao a partir do Excel.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
 
+from pydantic import ConfigDict
 from sqlalchemy import Column, DateTime, Index, String, Float, Integer, ForeignKey, event, update, insert as sa_insert, inspect as sa_inspect
+from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, Relationship, SQLModel
+
+
+def _to_utc(dt: datetime) -> datetime:
+    """Normaliza um datetime para UTC aware."""
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _datetime_to_iso_z(dt: datetime | None) -> str | None:
+    """Serializa datetimes em ISO-8601 com sufixo Z."""
+
+    if dt is None:
+        return None
+    return _to_utc(dt).isoformat().replace("+00:00", "Z")
+
+
+class UTCDateTime(TypeDecorator):
+    """Persistencia UTC sem conversoes implicitas no SQL Server."""
+
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        return _to_utc(value).replace(tzinfo=None)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        return _to_utc(value)
+
+
+class UTCModel(SQLModel):
+    model_config = ConfigDict(json_encoders={datetime: _datetime_to_iso_z})
 
 
 def utc_now() -> datetime:
@@ -21,7 +60,7 @@ def utc_now() -> datetime:
         comportamento atual do projeto.
     """
 
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def calcular_proxima_data(
@@ -90,7 +129,7 @@ class TipoDocumento(str, Enum):
 
 
 
-class Equipamento(SQLModel, table=True):
+class Equipamento(UTCModel, table=True):
     __tablename__ = "Equipamentos"
     __table_args__ = (
         Index("ix_equipamento_nome_localizacao", "nome", "localizacao"),
@@ -141,11 +180,11 @@ class Equipamento(SQLModel, table=True):
     foto_url: Optional[str] = Field(default=None, sa_column=Column(String(500)))
     criado_em: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime, nullable=False, index=True),
+        sa_column=Column(UTCDateTime(), nullable=False, index=True),
     )
     atualizado_em: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime, nullable=False),
+        sa_column=Column(UTCDateTime(), nullable=False),
     )
 
     # Porque: as relacoes nomeadas simplificam joins coerentes entre API,
@@ -158,7 +197,7 @@ class Equipamento(SQLModel, table=True):
     documentos: list["DocumentacaoEquipamento"] = Relationship(back_populates="equipamento")
 
 
-class Utilizador(SQLModel, table=True):
+class Utilizador(UTCModel, table=True):
     """Representa um utilizador autenticavel e rastreavel.
 
     Notes:
@@ -188,7 +227,7 @@ class Utilizador(SQLModel, table=True):
     )
     ativo: bool = Field(default=True, index=True)
     forcar_troca_pin: bool = Field(default=True)
-    criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False))
+    criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(UTCDateTime(), nullable=False))
 
     reservas: list["Reserva"] = Relationship(back_populates="utilizador_rel")
     sessoes: list["SessaoUso"] = Relationship(back_populates="utilizador_rel")
@@ -199,13 +238,8 @@ class Utilizador(SQLModel, table=True):
     documentos_carregados: list["DocumentacaoEquipamento"] = Relationship(back_populates="carregado_por")
 
 
-class Avaria(SQLModel, table=True):
-    """Registo de avaria de um equipamento.
-
-    Campos de custo, reparação externa e diagnóstico foram removidos para
-    um módulo de Manutenção dedicado. Este modelo mantém apenas a rastreabilidade
-    operacional essencial (quando, quem, resolvida ou não).
-    """
+class Avaria(UTCModel, table=True):
+    """Registo de avaria de um equipamento."""
 
     __tablename__ = "Avarias"
     __table_args__ = (
@@ -219,15 +253,16 @@ class Avaria(SQLModel, table=True):
         sa_column=Column("utilizador_id", Integer, ForeignKey("Utilizadores.id"), nullable=True, index=True),
     )
     descricao: str = Field(sa_column=Column("descricao", String, nullable=False))
-    data_registo: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False, index=True))
+    data_registo: datetime = Field(default_factory=utc_now, sa_column=Column(UTCDateTime(), nullable=False, index=True))
     resolvida: bool = Field(default=False, index=True)
-    data_resolucao: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True))
+    data_resolucao: Optional[datetime] = Field(default=None, sa_column=Column(UTCDateTime(), index=True))
     notas_resolucao: Optional[str] = Field(default=None)
+    custo_reparacao: Optional[float] = Field(default=None, sa_column=Column("custo_reparacao", Float, nullable=True))
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="avarias")
     reportado_por: Optional[Utilizador] = Relationship(back_populates="avarias_reportadas")
 
-class Manutencao(SQLModel, table=True):
+class Manutencao(UTCModel, table=True):
     """Historico de manutencao preventiva ou corretiva."""
 
     __tablename__ = "Manutencoes"
@@ -239,16 +274,16 @@ class Manutencao(SQLModel, table=True):
     equipamento_id: int = Field(foreign_key="Equipamentos.id", index=True)
     executado_por_id: Optional[int] = Field(default=None, foreign_key="Utilizadores.id", index=True)
     descricao: str = Field(sa_column=Column("descricao", String, nullable=False))
-    data_realizada: datetime = Field(sa_column=Column(DateTime, nullable=False, index=True))
+    data_realizada: datetime = Field(sa_column=Column(UTCDateTime(), nullable=False, index=True))
     periodicidade_dias: Optional[int] = Field(default=None, index=True)
-    proxima_data: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True))
-    criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False))
+    proxima_data: Optional[datetime] = Field(default=None, sa_column=Column(UTCDateTime(), index=True))
+    criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(UTCDateTime(), nullable=False))
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="manutencoes")
     executado_por: Optional[Utilizador] = Relationship(back_populates="manutencoes_executadas")
 
 
-class Calibracao(SQLModel, table=True):
+class Calibracao(UTCModel, table=True):
     """Historico de calibracao com suporte a certificado e planeamento."""
 
     __tablename__ = "Calibracoes"
@@ -259,18 +294,18 @@ class Calibracao(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     equipamento_id: int = Field(foreign_key="Equipamentos.id", index=True)
     executado_por_id: Optional[int] = Field(default=None, foreign_key="Utilizadores.id", index=True)
-    data_realizada: datetime = Field(sa_column=Column(DateTime, nullable=False, index=True))
+    data_realizada: datetime = Field(sa_column=Column(UTCDateTime(), nullable=False, index=True))
     periodicidade_dias: Optional[int] = Field(default=None, index=True)
-    proxima_data: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True))
+    proxima_data: Optional[datetime] = Field(default=None, sa_column=Column(UTCDateTime(), index=True))
     certificado_url: Optional[str] = Field(default=None, sa_column=Column(String(500)))
     observacoes: Optional[str] = Field(default=None)
-    criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False))
+    criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(UTCDateTime(), nullable=False))
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="calibracoes")
     executado_por: Optional[Utilizador] = Relationship(back_populates="calibracoes_executadas")
 
 
-class DocumentacaoEquipamento(SQLModel, table=True):
+class DocumentacaoEquipamento(UTCModel, table=True):
     """Metadados de documentos externos ligados ao equipamento.
 
     Notes:
@@ -294,13 +329,13 @@ class DocumentacaoEquipamento(SQLModel, table=True):
     )
     caminho_ficheiro: str = Field(sa_column=Column("caminho_ficheiro", String(1000), nullable=False))
     descricao: Optional[str] = Field(default=None)
-    criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False, index=True))
+    criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(UTCDateTime(), nullable=False, index=True))
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="documentos")
     carregado_por: Optional[Utilizador] = Relationship(back_populates="documentos_carregados")
 
 
-class Reserva(SQLModel, table=True):
+class Reserva(UTCModel, table=True):
     """Reserva planeada para utilizacao futura de um equipamento."""
 
     __tablename__ = "Reservas"
@@ -316,23 +351,23 @@ class Reserva(SQLModel, table=True):
     # Porque: o método de ensaio liga a reserva à norma/protocolo usado no laboratório
     # e melhora a rastreabilidade documental e técnica.
     metodo: Optional[str] = Field(default=None, sa_column=Column(String(180), index=True))
-    data_inicio: datetime = Field(sa_column=Column(DateTime, nullable=False, index=True))
-    data_fim: datetime = Field(sa_column=Column(DateTime, nullable=False, index=True))
+    data_inicio: datetime = Field(sa_column=Column(UTCDateTime(), nullable=False, index=True))
+    data_fim: datetime = Field(sa_column=Column(UTCDateTime(), nullable=False, index=True))
     # Duração estimada do ensaio em minutos (preenchida quando inicia o check-in)
     duracao_prevista_minutos: Optional[int] = Field(default=None, sa_column=Column("duracao_prevista_minutos", nullable=True, index=True))
     # Indica se o ensaio foi concluído com sucesso (usado para cálculo de OEE)
     concluido_com_sucesso: Optional[bool] = Field(default=None, sa_column=Column("concluido_com_sucesso", nullable=True, index=True))
     # Data/hora de conclusão automática (calculada como data_inicio + duracao_prevista_minutos)
-    fim_automatico: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True, index=True))
+    fim_automatico: Optional[datetime] = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True, index=True))
     notas: Optional[str] = Field(default=None)
-    criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False))
+    criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(UTCDateTime(), nullable=False))
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="reservas")
     utilizador_rel: Optional[Utilizador] = Relationship(back_populates="reservas")
     sessoes: list["SessaoUso"] = Relationship(back_populates="reserva")
 
 
-class SessaoUso(SQLModel, table=True):
+class SessaoUso(UTCModel, table=True):
     """Sessao real de check-in/check-out para auditoria operacional."""
 
     __tablename__ = "SessoesUso"
@@ -346,17 +381,22 @@ class SessaoUso(SQLModel, table=True):
     reserva_id: Optional[int] = Field(default=None, foreign_key="Reservas.id", index=True)
     utilizador_id: Optional[int] = Field(default=None, foreign_key="Utilizadores.id", index=True)
     utilizador: str = Field(sa_column=Column("utilizador", String(150), nullable=False))
-    inicio: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime, nullable=False, index=True))
-    fim: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True))
+    inicio: datetime = Field(default_factory=utc_now, sa_column=Column(UTCDateTime(), nullable=False, index=True))
+    fim: Optional[datetime] = Field(default=None, sa_column=Column(UTCDateTime(), index=True))
     duracao_prevista_minutos: Optional[int] = Field(default=None)
-    fim_automatico: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True))
+    fim_automatico: Optional[datetime] = Field(default=None, sa_column=Column(UTCDateTime(), index=True))
+    termino_forcado: bool = Field(default=False, index=True)
+    # False se duracao < 300s ou termino_forcado=True; exclui sessões inválidas do OEE
+    valida_para_stats: bool = Field(default=True, index=True)
+    projeto: Optional[str] = Field(default=None, sa_column=Column(String(150), nullable=True))
+    metodo: Optional[str] = Field(default=None, sa_column=Column(String(180), nullable=True))
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="sessoes")
     reserva: Optional[Reserva] = Relationship(back_populates="sessoes")
     utilizador_rel: Optional[Utilizador] = Relationship(back_populates="sessoes")
 
 
-class SessaoAuth(SQLModel, table=True):
+class SessaoAuth(UTCModel, table=True):
     """Sessão de autenticação com persistência em base de dados.
 
     Garante que as sessões são resilientes a reinícios de servidor, permitindo
@@ -388,17 +428,17 @@ class SessaoAuth(SQLModel, table=True):
         sa_column=Column(String(20), nullable=False),
     )
     expira_em: datetime = Field(
-        sa_column=Column(DateTime, nullable=False, index=True),
+        sa_column=Column(UTCDateTime(), nullable=False, index=True),
     )
     criado_em: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime, nullable=False),
+        sa_column=Column(UTCDateTime(), nullable=False),
     )
 
     utilizador: Optional[Utilizador] = Relationship(back_populates="sessoes_auth")
 
 
-class Log(SQLModel, table=True):
+class Log(UTCModel, table=True):
     """Registo persistente de auditoria de acções de utilizadores e administradores.
 
     Porque: a rastreabilidade é um requisito industrial crítico. Persistir logs na BD
@@ -423,7 +463,7 @@ class Log(SQLModel, table=True):
     sucesso: bool = Field(default=True, index=True)
     criado_em: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime, nullable=False, index=True),
+        sa_column=Column(UTCDateTime(), nullable=False, index=True),
     )
 
 

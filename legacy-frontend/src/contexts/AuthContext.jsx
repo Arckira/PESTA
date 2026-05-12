@@ -98,9 +98,10 @@ export function AuthProvider({ children }) {
       })
   }, [])
 
-  const openAuthPrompt = (mode = 'login') => {
+  const openAuthPrompt = (mode = 'login', redirectTo = null) => {
     setPromptMode(mode)
     setPromptOpen(true)
+    if (redirectTo !== null) setRedirectPath(redirectTo)
     return new Promise((resolve, reject) => {
       pendingPromptRef.current = { resolve, reject }
     })

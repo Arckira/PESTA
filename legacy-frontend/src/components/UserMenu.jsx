@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { UserCircle2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import styles from './UserMenu.module.css'
 
@@ -13,8 +14,13 @@ export default function UserMenu() {
         className={styles.trigger}
         onClick={() => setOpen((v) => !v)}
       >
-        <span className={styles.name}>{user.nome}</span>
-        <span className={styles.role}>{String(user.role).toUpperCase()}</span>
+        <div className={styles.avatar} aria-hidden>
+          <UserCircle2 size={36} strokeWidth={1.5} />
+        </div>
+        <div className={styles.textContent}>
+          <span className={styles.name}>{user.nome}</span>
+          <span className={styles.role}>{String(user.role).toUpperCase()}</span>
+        </div>
       </button>
 
       {/* Styled tooltip (shows on hover) */}

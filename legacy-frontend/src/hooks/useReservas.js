@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api/index.js'
+import { corDoUtilizador, hexToRgba } from '../utils/coresUtilizadores.js'
 
 /**
  * Hook para gerir reservas: eventos para calendário, lista de equipamentos e utilizadores, actions.
@@ -24,11 +25,10 @@ export function useReservas(userRole) {
       setEquipamentos(eqs)
       setUtilizadores(uts)
 
-      const COR_PLANEADO = { bg: '#1e3a5f', border: '#378ADD' }
-
       const evs = []
       reservas.forEach(r => {
         const iniciais = r.utilizador_iniciais || (r.utilizador_nome ? r.utilizador_nome.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase() : '')
+        const corBase = corDoUtilizador(r.utilizador_id)
 
         // Evento A — Planeado: intervalo original da reserva, sempre presente
         evs.push({
@@ -36,9 +36,9 @@ export function useReservas(userRole) {
           title: iniciais,
           start: r.data_inicio,
           end: r.data_fim,
-          backgroundColor: COR_PLANEADO.bg,
-          borderColor: COR_PLANEADO.border,
-          textColor: '#e8eaf0',
+          backgroundColor: r.esta_ativa ? corBase : hexToRgba(corBase, 0.2),
+          borderColor: corBase,
+          textColor: '#fff',
           zIndex: 1,
           extendedProps: { ...r, tipo: 'planeado' },
         })
@@ -52,9 +52,9 @@ export function useReservas(userRole) {
             title: iniciais,
             start: r.sessao_inicio,
             end: fimReal,
-            backgroundColor: '#0e2a1a',
-            borderColor: '#1D9E75',
-            textColor: '#e8eaf0',
+            backgroundColor: corBase,
+            borderColor: corBase,
+            textColor: '#fff',
             zIndex: 2,
             classNames: ['fc-event-real', emCurso ? 'fc-event-real--curso' : 'fc-event-real--concluido'],
             extendedProps: { ...r, tipo: 'real', emCurso },

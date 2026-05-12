@@ -11,6 +11,7 @@ import Login from './pages/Login.jsx'
 import Manutencoes from './pages/Manutencoes.jsx'
 import Reservas from './pages/Reservas.jsx'
 import Utilizadores from './pages/Utilizadores.jsx'
+import Verificacoes from './pages/Verificacoes.jsx'
 
 export default function App() {
   return (
@@ -53,6 +54,7 @@ export default function App() {
 
         <Route path="/avarias" element={<Layout><Avarias /></Layout>} />
         <Route path="/manutencoes" element={<Layout><Manutencoes /></Layout>} />
+        <Route path="/verificacoes" element={<Layout><Verificacoes /></Layout>} />
         <Route path="/calibracoes" element={<Layout><Calibracoes /></Layout>} />
         <Route path="/login" element={<Layout><Login /></Layout>} />
 

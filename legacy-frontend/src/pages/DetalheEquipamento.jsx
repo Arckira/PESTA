@@ -1,11 +1,24 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faBuilding,
+  faCalendarDays,
+  faTriangleExclamation as faExclamationTriangle,
+} from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/index.js'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import StatusBadge from '../components/StatusBadge.jsx'
 import QRCodeDisplay from '../components/QRCode/QRCodeDisplay.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
+import CheckInModal from '../components/Modals/CheckInModal.jsx'
 import styles from './DetalheEquipamento.module.css'
+
+function formatDateTimeLocal(date = new Date()) {
+  const d = new Date(date)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 const ESTADOS = [
   'Disponível',
@@ -60,7 +73,7 @@ export default function DetalheEquipamento() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const toast = useToast()
-  const { user, openAuthPrompt, setRedirectPath } = useAuth()
+  const { user, openAuthPrompt } = useAuth()
   // Parâmetro injetado pelo QR Code: ?action=checkin
   const acaoQR = searchParams.get('action')
   const [eq, setEq] = useState(null)
@@ -77,26 +90,30 @@ export default function DetalheEquipamento() {
   const [savingAvaria, setSavingAvaria] = useState(false)
   const [msgAvaria, setMsgAvaria] = useState('')
   const [descAvaria, setDescAvaria] = useState('')
-  const [empresaExterna, setEmpresaExterna] = useState('')
+  const [dataRegisto, setDataRegisto] = useState(() => formatDateTimeLocal())
+  const [empresaExterna, setEmpresaExterna] = useState(false)
+  const [paragemEquipamento, setParagemEquipamento] = useState(false)
   const [numRelatorio, setNumRelatorio] = useState('')
   const [custoAvaria, setCustoAvaria] = useState('')
   const [scPoAvaria, setScPoAvaria] = useState('')
   const [modalDuracao, setModalDuracao] = useState(false)
-  const [duracaoEstimada, setDuracaoEstimada] = useState('')
-  const [duracaoUnidade, setDuracaoUnidade] = useState('horas')
   const [savingCheckin, setSavingCheckin] = useState(false)
   const [sessaoAtiva, setSessaoAtiva] = useState(null)  // Sessão em progresso do utilizador atual
   const [reservaAtiva, setReservaAtiva] = useState(null)
   const [modoEdicao, setModoEdicao] = useState(false)  // true se estamos editando uma sessão existente
+  const [oeeData, setOeeData] = useState(null)
   const [modalTermino, setModalTermino] = useState(false)
   const [savingTermino, setSavingTermino] = useState(false)
   const autoReloadTimerRef = useRef(null)
+  const qrRef = useRef(null)
   // Garante que a ação QR só é processada uma vez por montagem do componente
   const qrAcaoProcessadaRef = useRef(false)
 
   const resetAvaria = () => {
     setDescAvaria('')
-    setEmpresaExterna('')
+    setDataRegisto(formatDateTimeLocal())
+    setEmpresaExterna(false)
+    setParagemEquipamento(false)
     setNumRelatorio('')
     setCustoAvaria('')
     setScPoAvaria('')
@@ -134,6 +151,11 @@ export default function DetalheEquipamento() {
     carregar()
   }, [carregar])
 
+  useEffect(() => {
+    if (!id) return
+    api.oeeEquipamento(id, 30).then(setOeeData).catch(() => {})
+  }, [id])
+
   // Quando existe fim_automatico, agenda um setTimeout preciso para recarregar
   // assim que o tempo expirar — sem polling e sem flickering.
   useEffect(() => {
@@ -167,22 +189,18 @@ export default function DetalheEquipamento() {
     qrAcaoProcessadaRef.current = true
 
     if (!user) {
-      // Operador não autenticado: guardar destino e abrir modal de login
-      setRedirectPath(`/equipamentos/${id}?action=checkin`)
-      openAuthPrompt('login')
+      openAuthPrompt('login', `/equipamentos/${id}?action=checkin`)
       return
     }
 
     // Operador autenticado: abrir modal de check-in automaticamente se o equipamento o permitir
     if (!sessaoAtiva && eq?.estado_atual !== 'Ocupado') {
-      setDuracaoEstimada('')
-      setDuracaoUnidade('horas')
       setModoEdicao(false)
       setModalDuracao(true)
     } else if (sessaoAtiva) {
       toast.info?.('Já existe uma sessão ativa neste equipamento.')
     }
-  }, [loading, acaoQR, user, sessaoAtiva, eq, id, openAuthPrompt, setRedirectPath, toast])
+  }, [loading, acaoQR, user, sessaoAtiva, eq, id, openAuthPrompt, toast])
 
   const handleEstado = async () => {
     try {
@@ -205,6 +223,9 @@ export default function DetalheEquipamento() {
       const res = await api.registarAvaria(id, descAvaria)
       setMsgAvaria(res.mensagem || 'Avaria registada!')
       setDescAvaria('')
+      setDataRegisto(formatDateTimeLocal())
+      setEmpresaExterna(false)
+      setParagemEquipamento(false)
       setCustoAvaria('')
       setScPoAvaria('')
       setMsgAvaria('')
@@ -222,18 +243,7 @@ export default function DetalheEquipamento() {
   }
 
   const handleCheckin = async () => {
-    // Mostrar modal para pedir a duração estimada (novo check-in ou edição)
-    if (sessaoAtiva) {
-      // Modo edição: pré-preencher com duração atual
-      setDuracaoEstimada('')
-      setDuracaoUnidade('horas')
-      setModoEdicao(true)
-    } else {
-      // Modo criação: limpar campos
-      setDuracaoEstimada('')
-      setDuracaoUnidade('horas')
-      setModoEdicao(false)
-    }
+    setModoEdicao(!!sessaoAtiva)
     setModalDuracao(true)
   }
 
@@ -266,93 +276,35 @@ export default function DetalheEquipamento() {
 
   const handleEditarSessao = () => {
     setModoEdicao(true)
-    if (reservaAtiva?.duracao_prevista_minutos) {
-      setDuracaoEstimada(String(reservaAtiva.duracao_prevista_minutos))
-      setDuracaoUnidade('minutos')
-    } else {
-      setDuracaoEstimada('')
-      setDuracaoUnidade('horas')
-    }
     setModalDuracao(true)
   }
 
-  const handleConfirmarCheckin = async () => {
-    const raw = parseFloat(String(duracaoEstimada).replace(',', '.'))
-    if (!raw || raw <= 0) {
-      toast.error('Introduza uma duração válida.')
-      return
-    }
-
-    // converter para minutos conforme unidade selecionada
-    let minutos = 0
-    switch (duracaoUnidade) {
-      case 'minutos':
-        minutos = Math.max(1, Math.ceil(raw))
-        break
-      case 'horas':
-        minutos = Math.max(1, Math.ceil(raw * 60))
-        break
-      case 'dias':
-        minutos = Math.max(1, Math.ceil(raw * 24 * 60))
-        break
-      case 'semanas':
-        minutos = Math.max(1, Math.ceil(raw * 7 * 24 * 60))
-        break
-      default:
-        minutos = Math.max(1, Math.ceil(raw))
-    }
-
+  const handleConfirmarCheckin = async ({ projeto, metodo, duracaoMinutos }) => {
+    const minutos = Math.max(1, duracaoMinutos)
     setSavingCheckin(true)
     try {
       if (modoEdicao) {
-        // Editar duração com base na data_inicio original da reserva
-        const token = localStorage.getItem('lab_auth_token')
-        const res = await fetch(`/api/atualizar-duracao/${id}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ duracao_prevista_minutos: minutos }),
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}))
-          const error = new Error(err.detail || `Erro ${res.status}`)
-          error.status = res.status
-          throw error
-        }
+        await api.editarDuracaoSessao(id, minutos)
         toast.success('Duração atualizada com sucesso.')
       } else {
-        // Criar novo check-in
-        await api.iniciarCheckin(id, null, minutos)
+        await api.iniciarCheckin(id, null, minutos, projeto, metodo)
         toast.success('Check-in iniciado com sucesso.')
       }
       setModalDuracao(false)
-      setDuracaoEstimada('')
-      setDuracaoUnidade('horas')
       setModoEdicao(false)
       carregar()
     } catch (e) {
-      // Tratamento específico de erros com melhor feedback ao utilizador
       let mensagem = e.message
-      
       if (e.status === 409) {
-        // 409: Conflito - já existe check-in ativo (se modoEdicao=false) ou outro utilizador em uso
-        if (!modoEdicao) {
-          mensagem = e.message || 'Equipamento já tem um check-in ativo. Use "Editar Duração" para modificar.'
-          // Recarregar para atualizar a sessão ativa
-          setTimeout(() => carregar(), 500)
-        } else {
-          mensagem = e.message || 'Erro ao atualizar a duração.'
-        }
+        mensagem = modoEdicao
+          ? e.message || 'Erro ao atualizar a duração.'
+          : e.message || 'Equipamento já tem um check-in ativo. Use "Ajustar Duração" para modificar.'
+        if (!modoEdicao) setTimeout(() => carregar(), 500)
       } else if (e.status === 400) {
-        // Erro de validação (estado inválido, etc)
         mensagem = e.message || 'Não é possível iniciar o ensaio neste momento.'
       } else if (e.status === 503) {
-        // Erro de base de dados
         mensagem = 'Erro de ligação ao servidor. Tente novamente.'
       }
-      
       toast.error(mensagem)
     } finally {
       setSavingCheckin(false)
@@ -387,6 +339,7 @@ export default function DetalheEquipamento() {
 
   if (!eq) return null
 
+  const shareUrl = `${window.location.origin}/equipamentos/${id}`
   const avariasAbertas = avarias.filter((a) => !a.resolvida).length
 
   return (
@@ -401,6 +354,14 @@ export default function DetalheEquipamento() {
 
         <span className={styles.sep}>/</span>
         <span>{eq.nome}</span>
+
+        <button
+          className={styles.btnPrintLabel}
+          onClick={() => qrRef.current?.print()}
+          style={{ marginLeft: 'auto' }}
+        >
+          ⎙ Imprimir Etiqueta
+        </button>
       </div>
 
       <div className={styles.header}>
@@ -433,11 +394,47 @@ export default function DetalheEquipamento() {
       </div>
 
       <div className={styles.section}>
-        <div className="label">Controlo OEE</div>
+        <div className="label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          Controlo OEE
+          <span
+            title="OEE baseado na relação entre tempo de uso real e tempo reservado"
+            style={{ cursor: 'help', fontSize: 12, color: 'var(--text-dim)', border: '1px solid var(--text-dim)', borderRadius: '50%', width: 16, height: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
+          >
+            ?
+          </span>
+        </div>
+
+        {oeeData && (
+          <div style={{ display: 'flex', gap: 24, marginBottom: 16, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>OEE (Temporal)</span>
+              <span style={{
+                fontSize: 28,
+                fontWeight: 700,
+                fontFamily: 'var(--font-display)',
+                color: oeeData.oee_pct >= 85 ? '#10b981' : oeeData.oee_pct >= 50 ? '#f59e0b' : '#c8102e',
+              }}>
+                {oeeData.oee_pct != null ? `${oeeData.oee_pct.toFixed(1)}%` : '—'}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                {oeeData.tempo_real_h.toFixed(1)}h reais / {oeeData.tempo_planeado_h.toFixed(1)}h planeadas
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Taxa Sucesso Planeamento</span>
+              <span style={{ fontSize: 22, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                {oeeData.taxa_sucesso_planeamento_pct != null ? `${oeeData.taxa_sucesso_planeamento_pct.toFixed(1)}%` : '—'}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                {oeeData.reservas_sucesso}/{oeeData.total_reservas} reservas concluídas
+              </span>
+            </div>
+          </div>
+        )}
 
         <div className={styles.acoes}>
-          {/* Mostrar "Iniciar Check-in" apenas quando não existe sessão ativa */}
-          {!sessaoAtiva && eq.estado_atual !== 'Ocupado' && eq.estado_atual !== 'Avariado' && (
+          {/* Mostrar "Iniciar Check-in" apenas quando disponível e sem sessão ativa */}
+          {!sessaoAtiva && eq.estado_atual === 'Disponível' && (
             <button
               className={styles.btnGreen}
               onClick={handleCheckin}
@@ -446,24 +443,21 @@ export default function DetalheEquipamento() {
             </button>
           )}
 
-          {/* Bloqueio visual se Avariado */}
-          {eq.estado_atual === 'Avariado' && !sessaoAtiva && (
-            <button
-              className={styles.btnRed}
-              disabled
-              title="Equipamento interdito por avaria"
-              style={{ opacity: 0.5, cursor: 'not-allowed' }}
-            >
-              Iniciar Check-in
-            </button>
-          )}
-
-          {/* Mostrar aviso se Avariado */}
-          {eq.estado_atual === 'Avariado' && (
-            <div style={{ padding: '10px 14px', background: 'var(--red-glow)', border: '1px solid var(--red)', borderRadius: 'var(--radius)', color: 'var(--red)', fontSize: '13px', fontFamily: 'var(--font-mono)' }}>
-              ⚠ Equipamento interdito por avaria
-            </div>
-          )}
+          {/* Bloqueio visual para estados que impedem check-in */}
+          {!sessaoAtiva && eq.estado_atual !== 'Disponível' && eq.estado_atual !== 'Ocupado' && (() => {
+            const bloqueios = {
+              'Avariado':       { cor: 'var(--red)',   msg: '⚠ Equipamento interdito por avaria' },
+              'Em manutenção':  { cor: 'var(--amber)',  msg: '⚙ Equipamento em manutenção' },
+              'Em calibração':  { cor: 'var(--amber)',  msg: '◎ Equipamento em calibração' },
+            }
+            const info = bloqueios[eq.estado_atual]
+            if (!info) return null
+            return (
+              <div style={{ padding: '10px 14px', background: `color-mix(in srgb, ${info.cor} 10%, transparent)`, border: `1px solid ${info.cor}`, borderRadius: 'var(--radius)', color: info.cor, fontSize: '13px', fontFamily: 'var(--font-mono)' }}>
+                {info.msg}
+              </div>
+            )
+          })()}
 
           {/* Botões de controlo: visíveis sempre que exista sessão ativa OU estado=Ocupado */}
           {(sessaoAtiva || eq.estado_atual === 'Ocupado') && (
@@ -519,14 +513,17 @@ export default function DetalheEquipamento() {
 
           <button
             className={styles.btnRed}
-            onClick={() => setModalAvaria(true)}
+            onClick={() => {
+              setDataRegisto(formatDateTimeLocal())
+              setModalAvaria(true)
+            }}
           >
             {avariasAbertas > 0 ? 'Ver Detalhes da Avaria' : 'Registar Avaria'}
           </button>
         </div>
       </div>
 
-      <QRCodeDisplay equipamento={eq} />
+      <QRCodeDisplay ref={qrRef} equipamento={eq} value={shareUrl} />
 
       <div className={styles.section}>
         <div className={styles.tabs}>
@@ -623,25 +620,80 @@ export default function DetalheEquipamento() {
             {msgAvaria ? (
               <div className={styles.sucesso}>{msgAvaria}</div>
             ) : (
-              <>
-                <textarea
-                  rows={4}
-                  className={styles.input}
-                  placeholder="Descrição do problema..."
-                  value={descAvaria}
-                  onChange={(e) =>
-                    setDescAvaria(e.target.value)
-                  }
-                />
+              <div className={styles.avariaGrid}>
+                <div className={styles.field}>
+                  <span className={styles.fieldLabel}>
+                    <span className={styles.fieldTag}>Equipamento</span>
+                  </span>
+                  <div className={styles.readonlyField}>
+                    <strong>{eq?.codigo || '—'}</strong>
+                    <span>{eq?.nome || 'Equipamento em carregamento'}</span>
+                  </div>
+                </div>
 
-                <input
-                  className={styles.input}
-                  placeholder="Empresa externa"
-                  value={empresaExterna}
-                  onChange={(e) =>
-                    setEmpresaExterna(e.target.value)
-                  }
-                />
+                <label className={styles.switchField}>
+                  <span className={styles.switchText}>
+                    <FontAwesomeIcon icon={faBuilding} className={styles.fieldIcon} aria-hidden="true" />
+                    Empresa Externa
+                  </span>
+                  <span className={styles.switchControl}>
+                    <input
+                      type="checkbox"
+                      checked={empresaExterna}
+                      onChange={(e) => setEmpresaExterna(e.target.checked)}
+                    />
+                    <span className={styles.switchTrack} aria-hidden="true">
+                      <span className={styles.switchThumb} />
+                    </span>
+                  </span>
+                </label>
+
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>
+                    <FontAwesomeIcon icon={faCalendarDays} className={styles.fieldIcon} aria-hidden="true" />
+                    Data de Registo
+                  </span>
+                  <input
+                    className={styles.input}
+                    type="datetime-local"
+                    value={dataRegisto}
+                    onChange={(e) => setDataRegisto(e.target.value)}
+                  />
+                </label>
+
+                <label className={styles.switchField}>
+                  <span className={styles.switchText}>
+                    <span className={styles.fieldTag}>Paragem</span>
+                    Paragem de Equipamento
+                  </span>
+                  <span className={styles.switchControl}>
+                    <input
+                      type="checkbox"
+                      checked={paragemEquipamento}
+                      onChange={(e) => setParagemEquipamento(e.target.checked)}
+                    />
+                    <span className={styles.switchTrack} aria-hidden="true">
+                      <span className={styles.switchThumb} />
+                    </span>
+                  </span>
+                </label>
+
+                <label className={`${styles.field} ${styles.fieldFull}`}>
+                  <span className={styles.fieldLabel}>
+                    <FontAwesomeIcon icon={faExclamationTriangle} className={styles.fieldIcon} aria-hidden="true" />
+                    Descrição do Problema
+                  </span>
+                  <textarea
+                    rows={4}
+                    className={styles.textarea}
+                    placeholder="Descreve o problema com o máximo de detalhe possível..."
+                    value={descAvaria}
+                    onChange={(e) =>
+                      setDescAvaria(e.target.value)
+                    }
+                  />
+
+                </label>
 
                 <input
                   className={styles.input}
@@ -670,7 +722,7 @@ export default function DetalheEquipamento() {
                     setScPoAvaria(e.target.value)
                   }
                 />
-              </>
+              </div>
             )}
 
             <div className={styles.modalActions}>
@@ -703,73 +755,15 @@ export default function DetalheEquipamento() {
       )}
 
       {modalDuracao && (
-        <div
-          className={styles.overlay}
-          onClick={() => setModalDuracao(false)}
-        >
-          <div
-            className={styles.modal}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2>{modoEdicao ? 'Editar Duração' : 'Duração Estimada do Ensaio'}</h2>
-
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '13px' }}>
-              {modoEdicao 
-                ? 'Qual é a nova duração estimada?'
-                : 'Qual é a duração estimada?'
-              }
-            </p>
-
-            <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-              <input
-                type="number"
-                className={styles.input}
-                placeholder="ex: 2"
-                min="0"
-                step="any"
-                value={duracaoEstimada}
-                onChange={(e) => setDuracaoEstimada(e.target.value)}
-                style={{ flex: 1, padding: '10px 12px' }}
-              />
-
-              <select
-                className={styles.input}
-                value={duracaoUnidade}
-                onChange={(e) => setDuracaoUnidade(e.target.value)}
-                style={{ width: 140 }}
-              >
-                <option value="minutos">Minutos</option>
-                <option value="horas">Horas</option>
-                <option value="dias">Dias</option>
-                <option value="semanas">Semanas</option>
-              </select>
-            </div>
-
-            <div className={styles.modalActions}>
-              <button
-                className={styles.btnSecondary}
-                onClick={() => {
-                  setModalDuracao(false)
-                  setDuracaoEstimada('')
-                  setDuracaoUnidade('horas')
-                }}
-              >
-                Cancelar
-              </button>
-
-              <button
-                className={styles.btnGreen}
-                onClick={handleConfirmarCheckin}
-                disabled={savingCheckin || !duracaoEstimada}
-              >
-                {savingCheckin 
-                  ? (modoEdicao ? 'A guardar...' : 'A iniciar...')
-                  : (modoEdicao ? 'Guardar' : 'Confirmar')
-                }
-              </button>
-            </div>
-          </div>
-        </div>
+        <CheckInModal
+          equipamentoNome={eq?.nome}
+          equipamentoCodigo={eq?.codigo || `EQ-${String(eq?.id || id).padStart(3, '0')}`}
+          modoEdicao={modoEdicao}
+          duracaoInicialMinutos={modoEdicao ? (sessaoAtiva?.duracao_prevista_minutos ?? reservaAtiva?.duracao_prevista_minutos ?? null) : null}
+          onConfirmar={handleConfirmarCheckin}
+          onClose={() => { setModalDuracao(false); setModoEdicao(false) }}
+          saving={savingCheckin}
+        />
       )}
 
       {modalTermino && (

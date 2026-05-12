@@ -20,9 +20,10 @@ export default function Login() {
 
   useEffect(() => {
     if (user) {
-      navigate(getPostLoginPath(user), { replace: true })
+      const from = location.state?.from
+      navigate(from || getPostLoginPath(user), { replace: true })
     }
-  }, [navigate, user])
+  }, [navigate, user, location.state])
 
   useEffect(() => {
     if (user) return

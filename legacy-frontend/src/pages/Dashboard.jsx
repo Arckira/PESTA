@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { FileDown, Share2 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import FullCalendar from '@fullcalendar/react'
 import resourceTimelinePlugin from '@fullcalendar/resource-timeline'
@@ -9,8 +10,54 @@ import StatusBadge, { normalizarEstadoEquipamento } from '../components/StatusBa
 import { useToast } from '../components/ToastProvider.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import styles from './Dashboard.module.css'
+import { corDoUtilizador, hexToRgba } from '../utils/coresUtilizadores.js'
+
+// Cor dinâmica OEE: Vermelho (<50%), Amarelo (50–85%), Verde (>85%)
+const corOEE = (pct) =>
+  pct < 50 ? '#c8102e' : pct <= 85 ? '#f59e0b' : '#10b981'
+
+// Gauge radial SVG — anel de progresso circular
+// Circunferência = 2 × π × 48 ≈ 301.59px; offset move o ponto de corte
+function RadialGauge({ value }) {
+  const R = 48
+  const circ = 2 * Math.PI * R
+  const pct = value !== null && value !== undefined ? Math.min(100, Math.max(0, value)) : 0
+  const offset = circ * (1 - pct / 100)
+  const cor = value !== null && value !== undefined ? corOEE(value) : '#d1d5db'
+  return (
+    <svg width="110" height="110" viewBox="0 0 120 120" aria-hidden="true">
+      <circle cx="60" cy="60" r={R} fill="none" stroke="#e5e7eb" strokeWidth="10" />
+      <circle
+        cx="60" cy="60" r={R}
+        fill="none"
+        stroke={cor}
+        strokeWidth="10"
+        strokeDasharray={circ}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        transform="rotate(-90 60 60)"
+        style={{ transition: 'stroke-dashoffset 0.6s ease, stroke 0.3s ease' }}
+      />
+      <text
+        x="50%" y="50%"
+        textAnchor="middle" dominantBaseline="middle"
+        style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 700, fill: cor }}
+      >
+        {value !== null && value !== undefined ? `${Math.round(value)}%` : '—'}
+      </text>
+    </svg>
+  )
+}
 
 const ESTADOS = ['Disponível', 'Ocupado', 'Avariado', 'Em manutenção', 'Em calibração']
+
+const COR_POR_ESTADO = {
+  'Disponível': '#10b981',
+  'Ocupado': '#6b7280',
+  'Avariado': '#c8102e',
+  'Em manutenção': '#a855f7',
+  'Em calibração': '#3b82f6'
+}
 
 export default function Dashboard() {
   const toast = useToast()
@@ -25,6 +72,7 @@ export default function Dashboard() {
   const [selectionInfo, setSelectionInfo] = useState(null)
   const [reservaForm, setReservaForm] = useState({ utilizador_id: '', projeto: '', notas: '' })
   const [exportingPlaneamento, setExportingPlaneamento] = useState(false)
+  const [oeeData, setOeeData] = useState(null)
 
   const handleDateSelect = (selectInfo) => {
     setSelectionInfo(selectInfo)
@@ -46,6 +94,8 @@ export default function Dashboard() {
       } else {
         setUtilizadores([])
       }
+      // OEE summary é carregado em paralelo sem bloquear o resto do dashboard
+      api.oeeGlobalSummary(30).then(setOeeData).catch(() => {})
     } catch (e) {
       setErro(e.message)
       toast.error(`Falha ao carregar dashboard: ${e.message}`)
@@ -79,6 +129,16 @@ export default function Dashboard() {
     } catch (error) {
       toast.error(`Erro ao gravar reserva: ${error.message}`)
     }
+  }
+
+  const handleExportPDF = () => {
+    window.print()
+  }
+
+  const handleShareTeams = () => {
+    const url = window.location.href
+    const teamsUrl = `https://teams.microsoft.com/l/chat/0/0?users=&message=Segue o relatório do Dashboard do Laboratório: ${url}`
+    window.open(teamsUrl, '_blank')
   }
 
   const handleExportarPlaneamentoPdf = async () => {
@@ -130,6 +190,11 @@ export default function Dashboard() {
       .slice(0, 4)
   }, [reservas])
 
+  const oeeIndividualMap = useMemo(() => {
+    if (!oeeData?.individual) return {}
+    return Object.fromEntries(oeeData.individual.map(item => [item.id, item]))
+  }, [oeeData])
+
   const taxaDisponibilidade = total ? Math.round((disponiveis / total) * 100) : 0
   const taxaAvarias = total ? Math.round((avariados / total) * 100) : 0
   const semAlertasCriticos = avariados === 0 && manut === 0 && calib === 0
@@ -147,9 +212,19 @@ export default function Dashboard() {
         </div>
         <div className={styles.headerRight}>
           <span className="badge badge-ok">Sistema online</span>
-          <button className={styles.quickAction} onClick={() => navigate('/reservas')}>
-            + Registo Rápido
-          </button>
+          <div className={styles.actionGroup}>
+            <button className={styles.btnExportPdf} onClick={handleExportPDF}>
+              <FileDown size={15} strokeWidth={2} />
+              Exportar
+            </button>
+            <button
+              className={styles.btnShare}
+              onClick={handleShareTeams}
+              title="Partilhar no Microsoft Teams"
+            >
+              <Share2 size={15} strokeWidth={2} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -183,6 +258,73 @@ export default function Dashboard() {
               <div className={styles.alertFoot}>{taxaAvarias > 0 ? `${taxaAvarias}% da frota com avaria.` : 'Monitorização ativa em curso.'}</div>
             </>
           )}
+        </article>
+      </section>
+
+      {/* ── OEE Global – 3 Cards proeminentes ── */}
+      <section className={styles.oeeSection}>
+        <article className={styles.oeeCard}>
+          <div className={styles.oeeCardLabel} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            OEE Global
+            <span
+              title="OEE baseado na relação entre tempo de uso real e tempo reservado. Equipamentos sem reservas são excluídos da média."
+              style={{ cursor: 'help', fontSize: 11, color: 'var(--text-dim)', border: '1px solid var(--text-dim)', borderRadius: '50%', width: 15, height: 15, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
+            >
+              ?
+            </span>
+          </div>
+          <div className={styles.oeeCardMain}>
+            <RadialGauge value={oeeData?.oee_global ?? null} />
+            <div>
+              <div
+                className={styles.oeeCardValue}
+                style={{ color: oeeData?.oee_global !== null && oeeData?.oee_global !== undefined ? corOEE(oeeData.oee_global) : 'var(--text-dim)' }}
+              >
+                {oeeData?.oee_global !== null && oeeData?.oee_global !== undefined ? `${oeeData.oee_global.toFixed(1)}%` : '—'}
+              </div>
+              <div className={styles.oeeCardSub}>Média dos equipamentos com reservas</div>
+            </div>
+          </div>
+        </article>
+
+        <article className={styles.oeeCard}>
+          <div className={styles.oeeCardLabel}>Disponibilidade Global</div>
+          <div
+            className={styles.oeeCardValue}
+            style={{ color: oeeData?.disponibilidade_global !== null && oeeData?.disponibilidade_global !== undefined ? corOEE(oeeData.disponibilidade_global) : 'var(--text-dim)', marginTop: 10 }}
+          >
+            {oeeData?.disponibilidade_global !== null && oeeData?.disponibilidade_global !== undefined ? `${oeeData.disponibilidade_global.toFixed(1)}%` : '—'}
+          </div>
+          <div className={styles.miniMeter} style={{ marginTop: 12 }}>
+            <div
+              className={styles.miniMeterFill}
+              style={{
+                width: `${Math.min(100, oeeData?.disponibilidade_global ?? 0)}%`,
+                backgroundColor: corOEE(oeeData?.disponibilidade_global ?? 0),
+              }}
+            />
+          </div>
+          <div className={styles.oeeCardSub} style={{ marginTop: 8 }}>Tempo Real / Tempo Planeado</div>
+        </article>
+
+        <article className={styles.oeeCard}>
+          <div className={styles.oeeCardLabel}>Performance Global</div>
+          <div
+            className={styles.oeeCardValue}
+            style={{ color: corOEE(oeeData?.performance_global ?? 100), marginTop: 10 }}
+          >
+            {oeeData ? `${(oeeData.performance_global ?? 100).toFixed(0)}%` : '—'}
+          </div>
+          <div className={styles.miniMeter} style={{ marginTop: 12 }}>
+            <div
+              className={styles.miniMeterFill}
+              style={{
+                width: `${oeeData?.performance_global ?? 0}%`,
+                backgroundColor: corOEE(oeeData?.performance_global ?? 100),
+              }}
+            />
+          </div>
+          <div className={styles.oeeCardSub} style={{ marginTop: 8 }}>Qualidade e Cadência assumidas = 100%</div>
         </article>
       </section>
 
@@ -237,11 +379,15 @@ export default function Dashboard() {
             {ESTADOS.map((estado) => {
               const count = equipamentos.filter((e) => normalizarEstadoEquipamento(e.estado_atual) === estado).length
               const pct = total ? (count / total) * 100 : 0
+              const corEstado = COR_POR_ESTADO[estado] || '#9ca3af'  // Cinza padrão se não mapeado
               return (
                 <div key={estado} className={styles.barItem}>
                   <StatusBadge estado={estado} />
                   <div className={styles.barTrack}>
-                    <div className={styles.barFill} style={{ width: `${pct}%` }} />
+                    <div
+                      className={styles.barFill}
+                      style={{ width: `${pct}%`, background: corEstado }}
+                    />
                   </div>
                   <span className={`${styles.barCount} mono`}>{count}</span>
                 </div>
@@ -308,18 +454,78 @@ export default function Dashboard() {
                   id: String(eq.id),
                   title: eq.nome,
                 }))}
-                events={(reservas || []).map((res) => ({
-                  id: String(res.id),
-                  resourceId: String(res.equipamento_id),
-                  title: `${res.projeto || 'Reserva'} - ${res.utilizador_nome || 'Utilizador'}`,
-                  start: res.data_inicio,
-                  end: res.data_fim,
-                  color: '#c8102e',
-                }))}
-                eventTextColor="#ffffff"
+                events={(reservas || []).map((res) => {
+                  const agora = Date.now()
+                  const emCurso = new Date(res.data_inicio).getTime() <= agora && new Date(res.data_fim).getTime() >= agora
+                  const cor = corDoUtilizador(res.utilizador_id)
+                  return {
+                    id: String(res.id),
+                    resourceId: String(res.equipamento_id),
+                    title: `${res.projeto || 'Reserva'} - ${res.utilizador_nome || 'Utilizador'}`,
+                    start: res.data_inicio,
+                    end: res.data_fim,
+                    backgroundColor: emCurso ? cor : hexToRgba(cor, 0.28),
+                    borderColor: cor,
+                    textColor: emCurso ? '#ffffff' : cor,
+                  }
+                })}
               />
             )}
           </div>
+        </div>
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <div className="label">Performance OEE</div>
+        </div>
+        <div className={styles.oeeTableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Equipamento</th>
+                <th>Tipo</th>
+                <th>Tempo Planeado (h)</th>
+                <th>Tempo Real (h)</th>
+                <th>Performance OEE</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentes.length > 0 ? recentes.map((eq) => {
+                const oeeItem = oeeIndividualMap[eq.id]
+                const oeePct = oeeItem?.oee_pct          // sempre ≤ 100% (capped no backend)
+                const desvio = oeeItem?.desvio_planeamento_pct ?? 0
+                const temDesvio = desvio > 0
+                // Cor de aviso laranja quando o tempo real excedeu o planeado
+                const corBarra = temDesvio ? '#f97316' : (oeePct !== null && oeePct !== undefined ? corOEE(oeePct) : '#d1d5db')
+                return (
+                  <tr key={eq.id} onClick={() => navigate(`/equipamentos/${eq.id}`)} className={styles.tableRow}>
+                    <td style={{ fontWeight: 500 }}>{eq.nome}</td>
+                    <td style={{ color: 'var(--text-secondary)' }}>{eq.tipo}</td>
+                    <td className="mono">{oeeItem ? oeeItem.tempo_planeado_h.toFixed(1) : '—'}</td>
+                    <td className="mono">{oeeItem ? oeeItem.tempo_real_h.toFixed(1) : '—'}</td>
+                    <td>
+                      {oeePct !== null && oeePct !== undefined ? (
+                        <>
+                          <strong style={{ color: corBarra }}>
+                            {temDesvio ? `100% (+${desvio.toFixed(0)}%)` : `${oeePct.toFixed(1)}%`}
+                          </strong>
+                          <div className={styles.miniMeter} style={{ marginTop: 4 }}>
+                            <div
+                              className={styles.miniMeterFill}
+                              style={{ width: `${oeePct}%`, background: corBarra }}
+                            />
+                          </div>
+                        </>
+                      ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
+                    </td>
+                  </tr>
+                )
+              }) : (
+                <tr><td colSpan={5} className={styles.empty}>Nenhum equipamento com dados de OEE.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

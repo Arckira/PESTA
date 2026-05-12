@@ -91,6 +91,22 @@
 }
 .back:hover { opacity: 0.7; }
 
+.btnPrintLabel {
+  background: var(--amber);
+  color: #000;
+  border: none;
+  border-radius: var(--radius);
+  padding: 6px 14px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: opacity var(--transition);
+  white-space: nowrap;
+}
+.btnPrintLabel:hover { opacity: 0.85; }
+
 .sep { color: var(--border-bright); }
 
 /* Header */
@@ -243,7 +259,7 @@
   background: var(--bg-panel);
   border: 1px solid var(--border-bright);
   border-radius: var(--radius-lg);
-  width: 460px;
+  width: min(94vw, 760px);
   max-width: 95vw;
   padding: 28px;
   animation: slideUp 0.2s ease;
@@ -270,6 +286,147 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.avariaGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.fieldFull {
+  grid-column: 1 / -1;
+}
+
+.fieldLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.fieldIcon {
+  width: 14px;
+  height: 14px;
+  color: var(--amber);
+  flex-shrink: 0;
+}
+
+.fieldTag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 74px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--amber-glow);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.readonlyField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  min-height: 44px;
+}
+
+.readonlyField strong {
+  font-size: 14px;
+}
+
+.readonlyField span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.switchField {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+.switchText {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.switchControl {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.switchControl input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+.switchTrack {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--border);
+  border: 1px solid var(--border-bright);
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.switchThumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform var(--transition), background var(--transition);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+}
+
+.switchControl input:checked + .switchTrack {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+.switchControl input:checked + .switchTrack .switchThumb {
+  transform: translateX(20px);
+}
+
+.switchControl input:focus-visible + .switchTrack {
+  outline: 2px solid var(--amber-dim);
+  outline-offset: 2px;
 }
 
 .stateOptions {
@@ -311,6 +468,10 @@
 .textarea:focus { border-color: var(--red); }
 .textarea::placeholder { color: var(--text-dim); }
 
+.fieldFull .textarea {
+  min-height: 120px;
+}
+
 .modalActions {
   display: flex;
   gap: 10px;
@@ -318,6 +479,26 @@
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
+}
+
+@media (max-width: 760px) {
+  .modal {
+    width: 95vw;
+    padding: 18px;
+  }
+
+  .avariaGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .switchField {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .switchControl {
+    align-self: flex-end;
+  }
 }
 
 .sucesso {
