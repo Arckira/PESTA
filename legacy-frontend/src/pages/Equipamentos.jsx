@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Plus, Play, BookOpen, Pencil, Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/index.js'
@@ -44,6 +45,7 @@ const EMPTY_CREATE_FORM = {
 // rápida de dados logísticos sem tocar nos dados técnicos.
 const EMPTY_EDIT_FORM = {
   nome: '',
+  codigo: '',
   tipo: '',
   localizacao: '',
   estado_atual: 'Disponível',
@@ -61,6 +63,17 @@ const CREATE_NUMERIC_FIELDS = [
 const EDIT_NUMERIC_FIELDS = []
 
 const MANUAL_SECTIONS = [
+  {
+    title: 'Identificação',
+    fields: [
+      { key: 'fabricante', label: 'Fabricante' },
+      { key: 'modelo', label: 'Modelo' },
+      { key: 'numero_serie', label: 'Número de Série' },
+      { key: 'ano_fabrico', label: 'Ano de Fabrico' },
+      { key: 'peso_kg', label: 'Peso', unit: 'kg' },
+      { key: 'peso_max_kg', label: 'Carga Máxima', unit: 'kg' },
+    ],
+  },
   {
     title: 'Dimensões Úteis',
     fields: [
@@ -83,6 +96,13 @@ const MANUAL_SECTIONS = [
 
 // Campos técnicos agrupados para edição na Ficha Técnica (manual)
 const MANUAL_EDIT_FIELDS = [
+  { key: 'codigo', label: 'Código Interno', textField: true },
+  { key: 'fabricante', label: 'Fabricante', textField: true },
+  { key: 'modelo', label: 'Modelo', textField: true },
+  { key: 'numero_serie', label: 'Número de Série', textField: true },
+  { key: 'ano_fabrico', label: 'Ano de Fabrico' },
+  { key: 'peso_kg', label: 'Peso', unit: 'kg' },
+  { key: 'peso_max_kg', label: 'Carga Máxima', unit: 'kg' },
   { key: 'humidade_max', label: 'Humidade máxima', unit: '%' },
   { key: 'largura_mm', label: 'Largura útil', unit: 'mm' },
   { key: 'altura_mm', label: 'Altura útil', unit: 'mm' },
@@ -154,6 +174,7 @@ function getEditErrors(form) {
 function createEditForm(equipamento) {
   return {
     nome: equipamento.nome || '',
+    codigo: equipamento.codigo || '',
     tipo: equipamento.tipo || '',
     localizacao: equipamento.localizacao || '',
     estado_atual: equipamento.estado_atual || 'Disponível',
@@ -247,6 +268,13 @@ export default function Equipamentos() {
   const openManual = (eq) => {
     setManualEquipamento(eq)
     setManualForm({
+      codigo: eq.codigo || '',
+      fabricante: eq.fabricante || '',
+      modelo: eq.modelo || '',
+      numero_serie: eq.numero_serie || '',
+      ano_fabrico: eq.ano_fabrico ?? '',
+      peso_kg: eq.peso_kg ?? '',
+      peso_max_kg: eq.peso_max_kg ?? '',
       humidade_max: eq.humidade_max ?? '',
       largura_mm: eq.largura_mm ?? '',
       altura_mm: eq.altura_mm ?? '',
@@ -359,6 +387,7 @@ export default function Equipamentos() {
       // descrição de avaria se o utilizador marcar como 'Avariado'.
       const payload = {
         nome: editForm.nome.trim(),
+        codigo: editForm.codigo.trim() || undefined,
         tipo: editForm.tipo,
         localizacao: editForm.localizacao.trim(),
       }
@@ -390,8 +419,11 @@ export default function Equipamentos() {
     if (!manualEquipamento || !manualForm) return
     setManualSaving(true)
     try {
+      const numericFields = MANUAL_EDIT_FIELDS.filter(f => !f.textField)
+      const textFields = MANUAL_EDIT_FIELDS.filter(f => f.textField)
       const payload = {
-        ...buildNumericPayload(manualForm, MANUAL_EDIT_FIELDS.map(f => ({ key: f.key, label: f.label, allowNegative: true }))),
+        ...buildNumericPayload(manualForm, numericFields.map(f => ({ key: f.key, label: f.label, allowNegative: true }))),
+        ...Object.fromEntries(textFields.map(f => [f.key, sanitizeText(manualForm[f.key])])),
         ligacao_eletrica: sanitizeText(manualForm.ligacao_eletrica),
       }
       const atualizado = await api.atualizarEquipamento(manualEquipamento.id, payload)
@@ -450,6 +482,7 @@ export default function Equipamentos() {
       <td>
         <strong className={styles.rowName}>{eq.nome}</strong>
       </td>
+      <td className="mono" style={{ color: 'var(--text-dim)', fontSize: 12 }}>{eq.codigo || '-'}</td>
       <td style={{ color: 'var(--text-secondary)' }}>{eq.tipo}</td>
       <td style={{ color: 'var(--text-secondary)' }}>{eq.localizacao}</td>
       <td><StatusBadge estado={eq.estado_atual} /></td>
@@ -460,32 +493,39 @@ export default function Equipamentos() {
         <div className={styles.rowActions}>
           <button
             type="button"
-            className={styles.btnDetail}
+            className={styles.btnCheckin}
             onClick={() => navigate(`/equipamentos/${eq.id}`)}
           >
-            Ver Detalhe
+            <Play size={18} />
+            Iniciar Check-in
           </button>
           <button
             type="button"
-            className={styles.btnManual}
+            className={styles.manualIcon}
             onClick={() => openManual(eq)}
+            aria-label="Consultar Manual Técnico"
+            title="Consultar Manual Técnico"
           >
-            Ver Manual
+            <BookOpen size={16} strokeWidth={2} />
           </button>
           <button
             type="button"
             className={styles.btnEdit}
             onClick={() => openEdit(eq)}
+            aria-label={`Editar ${eq.nome}`}
+            title="Editar"
           >
-            Editar
+            <Pencil size={14} strokeWidth={2} />
           </button>
           <button
             type="button"
             className={styles.btnDelete}
             onClick={() => handleEliminar(eq)}
             disabled={deletingId === eq.id}
+            aria-label={deletingId === eq.id ? `A eliminar ${eq.nome}` : `Eliminar ${eq.nome}`}
+            title={deletingId === eq.id ? 'A eliminar...' : 'Eliminar'}
           >
-            {deletingId === eq.id ? 'A eliminar...' : 'Eliminar'}
+            <Trash2 size={14} strokeWidth={2} />
           </button>
         </div>
       </td>
@@ -499,8 +539,13 @@ export default function Equipamentos() {
           <div className="label">Gestão</div>
           <h1 className={styles.title}>Equipamentos</h1>
         </div>
-        <button className={styles.btnPrimary} onClick={openCreate} type="button">
-          + Novo Equipamento
+        <button
+          onClick={openCreate}
+          type="button"
+          className={styles.addEquipmentBtn}
+        >
+          <Plus strokeWidth={2.5} />
+          Novo Equipamento
         </button>
       </div>
 
@@ -545,6 +590,7 @@ export default function Equipamentos() {
                 <tr>
                   <th>#</th>
                   <th>Nome</th>
+                  <th>CÓD. INTERNO</th>
                   <th>Tipo</th>
                   <th>Localização</th>
                   <th>Estado</th>
@@ -556,7 +602,7 @@ export default function Equipamentos() {
                 {filtrados.map(renderRow)}
                 {filtrados.length === 0 && (
                   <tr>
-                    <td colSpan={7} className={styles.emptyCell}>
+                    <td colSpan={8} className={styles.emptyCell}>
                       <EmptyState
                         icon="◎"
                         variant="neutral"
@@ -777,13 +823,24 @@ export default function Equipamentos() {
                   <div className={styles.manualSectionTitle}>Ficha Técnica (Edição)</div>
                   <div className={styles.manualGrid}>
                     {MANUAL_EDIT_FIELDS.map((field) => (
-                      <NumberField
-                        key={field.key}
-                        label={field.label}
-                        unit={field.unit}
-                        value={manualForm[field.key]}
-                        onChange={(value) => updateManualField(field.key, value)}
-                      />
+                      field.textField ? (
+                        <label key={field.key} className={styles.field}>
+                          <span className="label">{field.label}</span>
+                          <input
+                            className={styles.input}
+                            value={manualForm[field.key]}
+                            onChange={(e) => updateManualField(field.key, e.target.value)}
+                          />
+                        </label>
+                      ) : (
+                        <NumberField
+                          key={field.key}
+                          label={field.label}
+                          unit={field.unit}
+                          value={manualForm[field.key]}
+                          onChange={(value) => updateManualField(field.key, value)}
+                        />
+                      )
                     ))}
                     <label className={styles.field} style={{ gridColumn: '1 / -1' }}>
                       <span className="label">Ligação Eléctrica</span>
@@ -814,6 +871,13 @@ export default function Equipamentos() {
               {manualEdit && (
                 <>
                   <button className={styles.btnSecondary} onClick={() => { setManualEdit(false); setManualForm({
+                    codigo: manualEquipamento.codigo || '',
+                    fabricante: manualEquipamento.fabricante || '',
+                    modelo: manualEquipamento.modelo || '',
+                    numero_serie: manualEquipamento.numero_serie || '',
+                    ano_fabrico: manualEquipamento.ano_fabrico ?? '',
+                    peso_kg: manualEquipamento.peso_kg ?? '',
+                    peso_max_kg: manualEquipamento.peso_max_kg ?? '',
                     humidade_max: manualEquipamento.humidade_max ?? '',
                     largura_mm: manualEquipamento.largura_mm ?? '',
                     altura_mm: manualEquipamento.altura_mm ?? '',
@@ -859,6 +923,16 @@ export default function Equipamentos() {
                     onBlur={() => markEditTouched('nome')}
                   />
                   {showEditError('nome') && <span className={styles.fieldHintError}>{editFieldErrors.nome}</span>}
+                </label>
+
+                <label className={styles.field}>
+                  <span className="label">Código Interno</span>
+                  <input
+                    className={styles.input}
+                    value={editForm.codigo}
+                    onChange={(e) => updateEditField('codigo', e.target.value)}
+                    placeholder="ex: T1C-0015"
+                  />
                 </label>
 
                 <label className={styles.field}>

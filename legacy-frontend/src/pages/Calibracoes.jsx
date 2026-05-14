@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Plus, Download } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/index.js'
 import EmptyState from '../components/EmptyState.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
-import { downloadCsv } from '../utils/downloadCsv.js'
 import styles from './Calibracoes.module.css'
 import { useEquipamentos } from '../hooks/useEquipamentos.js'
 import StatusBadge from '../components/StatusBadge.jsx'
@@ -100,6 +100,24 @@ export default function Calibracoes() {
     if (Number.isNaN(d.getTime())) return ''
     return d.toISOString().slice(0, 19).replace('T', ' ')
   }, [])
+
+  const handleExportPdf = useCallback(async () => {
+    try {
+      const urgencia = filtroUrgencia === 'todas' ? '' : filtroUrgencia
+      const blob = await api.exportarCalibracesPdf({ filtro: pesquisa, urgencia })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `calibrações_${new Date().toISOString().split('T')[0]}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      toast.success('PDF exportado com sucesso.')
+    } catch (e) {
+      toast.error(`Falha ao exportar: ${e.message}`)
+    }
+  }, [pesquisa, filtroUrgencia, toast])
 
   const handleExport = useCallback(() => {
     if (!calibracoesFiltradas || calibracoesFiltradas.length === 0) return
@@ -223,8 +241,9 @@ export default function Calibracoes() {
           <div className="label">Registos</div>
           <h1 className={styles.title}>Calibrações</h1>
         </div>
-        <button className={styles.btnPrimary} onClick={() => setModal(true)}>
-          + Registar Calibração
+        <button type="button" className={styles.registerBtn} onClick={() => setModal(true)}>
+          <Plus size={18} strokeWidth={2.5} />
+          Registar Calibração
         </button>
       </div>
 
@@ -250,7 +269,7 @@ export default function Calibracoes() {
         </div>
       )}
 
-      <div className={styles.filtersBar}>
+      <div className={styles.filters}>
         <input
           className={styles.search}
           placeholder="Pesquisar por equipamento ou certificado…"
@@ -262,7 +281,7 @@ export default function Calibracoes() {
           value={filtroUrgencia}
           onChange={(e) => setFiltroUrgencia(e.target.value)}
         >
-          <option value="todas">Todas</option>
+          <option value="todas">Todas as urgências</option>
           <option value="vencidas">Vencidas</option>
           <option value="urgentes">A vencer (&lt;=30d)</option>
           <option value="ok">Em dia (&gt;30d)</option>
@@ -271,9 +290,10 @@ export default function Calibracoes() {
           type="button"
           className={styles.btnExport}
           disabled={loadingPage || calibracoesFiltradas.length === 0}
-          onClick={handleExport}
+          onClick={handleExportPdf}
         >
-          Exportar CSV
+          <Download size={14} strokeWidth={2} />
+          Exportar PDF
         </button>
       </div>
 

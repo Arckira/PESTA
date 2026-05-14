@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
-import { FileDown, Share2 } from 'lucide-react'
+import { FileDown } from 'lucide-react'
+import { BsMicrosoftTeams } from 'react-icons/bs'
 import { Link, useNavigate } from 'react-router-dom'
 import FullCalendar from '@fullcalendar/react'
 import resourceTimelinePlugin from '@fullcalendar/resource-timeline'
@@ -132,7 +133,8 @@ export default function Dashboard() {
   }
 
   const handleExportPDF = () => {
-    window.print()
+    // Reutiliza a rotina de exportar planeamento em PDF (download via API)
+    handleExportarPlaneamentoPdf()
   }
 
   const handleShareTeams = () => {
@@ -215,14 +217,15 @@ export default function Dashboard() {
           <div className={styles.actionGroup}>
             <button className={styles.btnExportPdf} onClick={handleExportPDF}>
               <FileDown size={15} strokeWidth={2} />
-              Exportar
+              Exportar PDF
             </button>
             <button
               className={styles.btnShare}
               onClick={handleShareTeams}
               title="Partilhar no Microsoft Teams"
+              aria-label="Partilhar no Microsoft Teams"
             >
-              <Share2 size={15} strokeWidth={2} />
+              <BsMicrosoftTeams size={18} color="#6264A7" />
             </button>
           </div>
         </div>

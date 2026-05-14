@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { Plus } from 'lucide-react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -203,8 +204,9 @@ export default function Reservas({startOpenModal = false}) {
           >
             {exporting ? 'A exportar…' : 'Exportar PDF'}
           </button>
-          <button className={styles.btnPrimary} onClick={e => { e.stopPropagation(); abrirModalNovaReserva() }}>
-            + Nova Reserva
+          <button type="button" className={styles.addEquipmentBtn} onClick={e => { e.stopPropagation(); abrirModalNovaReserva() }}>
+            <Plus strokeWidth={2.5} />
+            Nova Reserva
           </button>
         </div>
       </div>

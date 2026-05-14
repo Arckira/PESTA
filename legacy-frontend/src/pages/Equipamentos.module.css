@@ -124,28 +124,85 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
-.btnDetail, .btnManual, .btnEdit, .btnDelete {
+/* Botão primário da linha — Iniciar Check-in */
+.btnCheckin {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background-color: #059669;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.btnCheckin:hover {
+  background-color: #047857;
+}
+
+.btnCheckin svg {
+  flex-shrink: 0;
+}
+
+/* Botão modal "Editar Ficha" — reutilizado no painel da Ficha Técnica */
+.btnManual {
   border-radius: 999px;
   padding: 5px 11px;
   font-family: var(--font-mono);
   font-size: 11px;
   transition: all var(--transition);
-}
-
-.btnDetail {
-  border: 1px solid rgba(208, 160, 47, 0.35);
-  background: rgba(208, 160, 47, 0.08);
-  color: var(--amber);
-}
-
-.btnManual {
   border: 1px solid rgba(94, 106, 210, 0.28);
   background: rgba(94, 106, 210, 0.08);
   color: #4f46e5;
+  cursor: pointer;
+}
+
+.btnManual:hover {
+  transform: translateY(-1px);
+}
+
+/* Ícone ghost — Consultar Manual Técnico */
+.manualIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #2563eb;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), transform var(--transition);
+}
+
+.manualIcon:hover {
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  transform: scale(1.1);
+}
+
+/* Botões de ação circulares — Editar e Eliminar */
+.btnEdit,
+.btnDelete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  transition: all var(--transition);
+  cursor: pointer;
 }
 
 .btnEdit {
@@ -160,8 +217,6 @@
   color: var(--red);
 }
 
-.btnDetail:hover,
-.btnManual:hover,
 .btnEdit:hover,
 .btnDelete:hover {
   transform: translateY(-1px);
@@ -199,6 +254,70 @@
   font-size: 13px;
 }
 .formErro { margin-top: 12px; font-family: var(--font-mono); font-size: 12px; }
+
+/* --- Botão de Criação (Cabeçalho) --- */
+/*
+  Porque (PT-PT): classe isolada para o CTA principal da página, garantindo
+  que alterações futuras neste botão não afectam os botões de acção da tabela.
+*/
+.addEquipmentBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #E30613;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius);
+  box-shadow: 0 1px 4px rgba(227, 6, 19, 0.25);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition), box-shadow var(--transition), transform var(--transition);
+}
+
+.addEquipmentBtn:hover {
+  background: #c8102e;
+  box-shadow: 0 2px 8px rgba(227, 6, 19, 0.35);
+}
+
+.addEquipmentBtn:active {
+  transform: scale(0.97);
+}
+
+/* Garante que o ícone '+' tem dimensão fixa e não estica o botão */
+.addEquipmentBtn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+/* --- Botão "Ver Manual" (Tabela) — Estilo Contorno --- */
+/*
+  Porque (PT-PT): botão de acção secundária na tabela; o estilo outline
+  mantém a hierarquia visual clara: o CTA de criação fica dominante e
+  este fica visivelmente subordinado sem perder legibilidade.
+*/
+.viewManualBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid rgba(227, 6, 19, 0.4);
+  border-radius: 999px;
+  color: #E30613;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.viewManualBtn:hover {
+  background: rgba(227, 6, 19, 0.08);
+  border-color: rgba(227, 6, 19, 0.6);
+}
 
 /* --- Buttons --- */
 .btnPrimary, .btnSecondary {

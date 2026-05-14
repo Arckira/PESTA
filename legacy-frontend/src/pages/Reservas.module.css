@@ -517,6 +517,27 @@
 .textarea:focus { border-color: var(--amber-dim); }
 .formErro { margin-top: 10px; padding: 10px 14px; background: var(--red-glow); border: 1px solid var(--red); border-radius: var(--radius); color: var(--red); font-size: 12px; font-family: var(--font-mono); }
 .modalActions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; flex-wrap: wrap; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+/* --- Botão CTA do Cabeçalho --- */
+.addEquipmentBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #E30613;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius);
+  box-shadow: 0 1px 4px rgba(227, 6, 19, 0.25);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition), box-shadow var(--transition), transform var(--transition);
+}
+.addEquipmentBtn:hover { background: #c8102e; box-shadow: 0 2px 8px rgba(227, 6, 19, 0.35); }
+.addEquipmentBtn:active { transform: scale(0.97); }
+.addEquipmentBtn svg { width: 18px; height: 18px; flex-shrink: 0; }
+
 .btnPrimary { background: var(--amber); color: #000; border: none; border-radius: var(--radius); padding: 9px 18px; font-family: var(--font-display); font-size: 14px; font-weight: 600; letter-spacing: 0.04em; cursor: pointer; transition: opacity var(--transition); }
 .btnPrimary:hover:not(:disabled) { opacity: 0.85; }
 .btnPrimary:disabled { opacity: 0.5; cursor: not-allowed; }

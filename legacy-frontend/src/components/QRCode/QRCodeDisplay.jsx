@@ -2,11 +2,16 @@ import { forwardRef, useImperativeHandle, useRef } from 'react'
 import { QRCodeCanvas } from 'qrcode.react'
 import labLogo from '../../assets/industrial-testing-lab-logo.png'
 import styles from './QRCodeDisplay.module.css'
+import { QR_FRONTEND_BASE } from '../../utils/config'
 
-const QRCodeDisplay = forwardRef(function QRCodeDisplay({ equipamento, value }, ref) {
+const QR_ERROR_LEVEL = 'H'
+
+const QRCodeDisplay = forwardRef(function QRCodeDisplay({ equipamento }, ref) {
   const canvasRef = useRef(null)
 
-  const url = value || `${window.location.origin}/equipamentos/${equipamento.id}`
+  // URL determinística: baseia-se apenas no ID persistente do equipamento.
+  // QR_FRONTEND_BASE resolve para o IP da rede local, permitindo leitura por telemóvel.
+  const url = `${QR_FRONTEND_BASE}/equipamentos/${equipamento.id}`
 
   const handlePrint = () => {
     const canvas = canvasRef.current?.querySelector('canvas')
@@ -72,7 +77,7 @@ const QRCodeDisplay = forwardRef(function QRCodeDisplay({ equipamento, value }, 
           <QRCodeCanvas
             value={url}
             size={160}
-            level="M"
+            level={QR_ERROR_LEVEL}
             includeMargin
             bgColor="#ffffff"
             fgColor="#111111"

@@ -116,12 +116,40 @@ export const api = {
   listarManutencoes:      (equipamentoId) => request(`/equipamentos/${equipamentoId}/manutencoes`),
   listarTodasManutencoes: ()              => request('/manutencoes'),
   registarManutencao:     (id, data)      => request(`/equipamentos/${id}/manutencao`, { method: 'POST', body: JSON.stringify(data) }),
+  exportarManutencoesPdf: async ({ filtro = '', tipo = '' } = {}) => {
+    const token = getStoredToken()
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const params = new URLSearchParams()
+    if (filtro) params.set('filtro', filtro)
+    if (tipo) params.set('tipo', tipo)
+    const query = params.toString()
+    const res = await fetch(`${BASE}/manutencoes/exportar/pdf${query ? `?${query}` : ''}`, { headers })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `Erro ${res.status}`)
+    }
+    return res.blob()
+  },
 
   // ── Calibrações ──
   listarCalibracoes:      (equipamentoId) => request(`/equipamentos/${equipamentoId}/calibracoes`),
   listarTodasCalibracoes: ()              => request('/calibracoes'),
   calibracoesProximas:    (dias = 30)     => request(`/calibracoes/proximas?dias=${dias}`),
   registarCalibracao:     (id, data)      => request(`/equipamentos/${id}/calibracao`, { method: 'POST', body: JSON.stringify(data) }),
+  exportarCalibracesPdf:  async ({ filtro = '', urgencia = '' } = {}) => {
+    const token = getStoredToken()
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const params = new URLSearchParams()
+    if (filtro) params.set('filtro', filtro)
+    if (urgencia) params.set('urgencia', urgencia)
+    const query = params.toString()
+    const res = await fetch(`${BASE}/calibracoes/exportar/pdf${query ? `?${query}` : ''}`, { headers })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `Erro ${res.status}`)
+    }
+    return res.blob()
+  },
 
   // ── Reservas ──
   listarReservas:         ()              => request('/reservas'),

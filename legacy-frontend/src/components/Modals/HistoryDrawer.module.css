@@ -1,0 +1,189 @@
+.drawer {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  z-index: 1200;
+  background: rgba(0,0,0,0.25);
+}
+.panel {
+  width: min(520px, 92vw);
+  height: 100vh;
+  background: var(--bg-panel);
+  box-shadow: -8px 0 24px rgba(0,0,0,0.12);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 14px;
+  overflow: auto;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+}
+.close {
+  background: transparent;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.quickStats {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+.stat {
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 7px 8px;
+  border-radius: 8px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.statLabel {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.statValue {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.filters {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--border) 20%, #fff);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  overflow-x: auto;
+}
+
+.filterTab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition), color var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+
+.filterTab:hover {
+  background: color-mix(in srgb, var(--border) 35%, #fff);
+  color: var(--text-primary);
+}
+
+.filterTabActive {
+  background: color-mix(in srgb, var(--amber) 18%, #fff);
+  color: var(--amber-dim);
+  border-color: color-mix(in srgb, var(--amber) 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--amber) 18%, transparent) inset;
+}
+.body { padding-bottom: 24px; }
+.loading { color: var(--text-secondary); font-size: 13px; padding: 12px 6px; }
+.empty { color: var(--text-secondary); padding: 12px 6px; }
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px 16px 20px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.emptyIcon {
+  width: 30px;
+  height: 30px;
+  color: var(--amber-dim);
+  opacity: 0.8;
+}
+
+.emptyText {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Timeline */
+.timeline { display: flex; flex-direction: column; gap: 10px; padding-top: 6px; }
+.group { display: flex; flex-direction: column; gap: 8px; }
+.groupTitle { font-size: 13px; color: var(--text-secondary); font-weight: 700; margin-left: 8px; }
+.groupItems {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-left: 10px;
+}
+
+.groupItems::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 4px;
+  width: 2px;
+  background: var(--border);
+  border-radius: 999px;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 4px; /* compact vertical padding */
+}
+.lineMarker {
+  display: flex;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--amber); /* default */
+  border: 2px solid var(--bg-panel);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.04);
+}
+.dot[data-finished="true"] { background: var(--green); }
+.dot[data-finished="false"], .dot:not([data-finished]) { background: #f59e0b; }
+
+.itemContent { display: flex; flex-direction: column; gap: 4px; }
+.timeRange { font-weight: 700; font-size: 13px; color: var(--text-primary); }
+.meta { display: flex; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.user { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project { color: var(--text-secondary); }
+.duration { font-weight: 700; color: var(--text-primary); font-size: 13px; padding-left: 0; }
+
+@media (max-width: 760px) {
+  .panel { width: 100vw; }
+  .quickStats { gap: 8px; }
+  .stat { padding: 6px 8px; }
+  .filters { gap: 4px; }
+  .filterTab { padding: 7px 10px; }
+}

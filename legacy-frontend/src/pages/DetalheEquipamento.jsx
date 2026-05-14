@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { History, Play } from 'lucide-react'
 import {
   faBuilding,
   faCalendarDays,
@@ -12,6 +13,7 @@ import StatusBadge from '../components/StatusBadge.jsx'
 import QRCodeDisplay from '../components/QRCode/QRCodeDisplay.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import CheckInModal from '../components/Modals/CheckInModal.jsx'
+import HistoryDrawer from '../components/Modals/HistoryDrawer.jsx'
 import styles from './DetalheEquipamento.module.css'
 
 function formatDateTimeLocal(date = new Date()) {
@@ -104,6 +106,7 @@ export default function DetalheEquipamento() {
   const [oeeData, setOeeData] = useState(null)
   const [modalTermino, setModalTermino] = useState(false)
   const [savingTermino, setSavingTermino] = useState(false)
+  const [showHistoryDrawer, setShowHistoryDrawer] = useState(false)
   const autoReloadTimerRef = useRef(null)
   const qrRef = useRef(null)
   // Garante que a ação QR só é processada uma vez por montagem do componente
@@ -355,13 +358,6 @@ export default function DetalheEquipamento() {
         <span className={styles.sep}>/</span>
         <span>{eq.nome}</span>
 
-        <button
-          className={styles.btnPrintLabel}
-          onClick={() => qrRef.current?.print()}
-          style={{ marginLeft: 'auto' }}
-        >
-          ⎙ Imprimir Etiqueta
-        </button>
       </div>
 
       <div className={styles.header}>
@@ -377,6 +373,15 @@ export default function DetalheEquipamento() {
         </div>
 
         <StatusBadge estado={eq.estado_atual} />
+          <button
+            type="button"
+            onClick={() => setShowHistoryDrawer(true)}
+            title="Consultar registos de utilização e eventos deste ativo"
+            className={styles.btnHistory}
+          >
+            <History size={16} />
+            <span>Ver Histórico</span>
+          </button>
       </div>
 
       <div className={styles.infoGrid}>
@@ -436,9 +441,10 @@ export default function DetalheEquipamento() {
           {/* Mostrar "Iniciar Check-in" apenas quando disponível e sem sessão ativa */}
           {!sessaoAtiva && eq.estado_atual === 'Disponível' && (
             <button
-              className={styles.btnGreen}
+              className={styles.btnCheckIn}
               onClick={handleCheckin}
             >
+              <Play size={18} />
               Iniciar Check-in
             </button>
           )}
@@ -803,6 +809,12 @@ export default function DetalheEquipamento() {
           </div>
         </div>
       )}
+
+      <HistoryDrawer
+        equipamentoId={id}
+        open={showHistoryDrawer}
+        onClose={() => setShowHistoryDrawer(false)}
+      />
     </div>
   )
 }

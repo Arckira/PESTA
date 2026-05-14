@@ -14,7 +14,7 @@ from pydantic import BaseModel, model_validator
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select, delete
 
-from database import criar_tabelas, get_session, engine, _garantir_coluna_mssql, IS_MSSQL
+from database import criar_tabelas, get_session, engine, _garantir_coluna_mssql, IS_MSSQL, _garantir_indices_filtrados_mssql
 from models import (
     Avaria,
     Calibracao,
@@ -40,22 +40,25 @@ ModeloT = TypeVar("ModeloT")
 # sem depender de reinício do servidor (migração lazy).
 _sessaouso_migrada = False
 _avarias_migrada = False
+_manutencoes_migrada = False
 
 def _garantir_colunas_sessaouso() -> None:
     global _sessaouso_migrada
     if _sessaouso_migrada:
         return
-    if not IS_MSSQL:
-        _sessaouso_migrada = True
-        return
     try:
+        tipo_int = "INT" if IS_MSSQL else "INTEGER"
+        tipo_datetime = "DATETIME" if IS_MSSQL else "TIMESTAMP"
+        tipo_bool = "BIT" if IS_MSSQL else "INTEGER"
+        tipo_texto_150 = "NVARCHAR(150)" if IS_MSSQL else "VARCHAR(150)"
+        tipo_texto_180 = "NVARCHAR(180)" if IS_MSSQL else "VARCHAR(180)"
         with engine.begin() as conn:
-            _garantir_coluna_mssql(conn, "SessoesUso", "duracao_prevista_minutos", "INT NULL")
-            _garantir_coluna_mssql(conn, "SessoesUso", "fim_automatico", "DATETIME NULL")
-            _garantir_coluna_mssql(conn, "SessoesUso", "termino_forcado", "BIT NOT NULL DEFAULT 0")
-            _garantir_coluna_mssql(conn, "SessoesUso", "valida_para_stats", "BIT NOT NULL DEFAULT 1")
-            _garantir_coluna_mssql(conn, "SessoesUso", "projeto", "NVARCHAR(150) NULL")
-            _garantir_coluna_mssql(conn, "SessoesUso", "metodo", "NVARCHAR(180) NULL")
+            _garantir_coluna_mssql(conn, "SessoesUso", "duracao_prevista_minutos", f"{tipo_int} NULL")
+            _garantir_coluna_mssql(conn, "SessoesUso", "fim_automatico", f"{tipo_datetime} NULL")
+            _garantir_coluna_mssql(conn, "SessoesUso", "termino_forcado", f"{tipo_bool} NOT NULL DEFAULT 0")
+            _garantir_coluna_mssql(conn, "SessoesUso", "valida_para_stats", f"{tipo_bool} NOT NULL DEFAULT 1")
+            _garantir_coluna_mssql(conn, "SessoesUso", "projeto", f"{tipo_texto_150} NULL")
+            _garantir_coluna_mssql(conn, "SessoesUso", "metodo", f"{tipo_texto_180} NULL")
         _sessaouso_migrada = True
         logger.info("Colunas SessoesUso garantidas (incl. termino_forcado / valida_para_stats).")
     except Exception:
@@ -65,16 +68,40 @@ def _garantir_colunas_avarias() -> None:
     global _avarias_migrada
     if _avarias_migrada:
         return
-    if not IS_MSSQL:
+    try:
+        tipo_float = "FLOAT" if IS_MSSQL else "REAL"
+        tipo_texto_150 = "NVARCHAR(150)" if IS_MSSQL else "VARCHAR(150)"
+        tipo_texto_100 = "NVARCHAR(100)" if IS_MSSQL else "VARCHAR(100)"
+        with engine.begin() as conn:
+            _garantir_coluna_mssql(conn, "Avarias", "custo_reparacao", f"{tipo_float} NULL")
+            _garantir_coluna_mssql(conn, "Avarias", "empresa_externa", f"{tipo_texto_150} NULL")
+            _garantir_coluna_mssql(conn, "Avarias", "num_sc_po", f"{tipo_texto_100} NULL")
         _avarias_migrada = True
+        logger.info("Colunas Avarias (custo_reparacao, empresa_externa, num_sc_po) garantidas.")
+    except Exception:
+        logger.warning("Não foi possível garantir colunas Avarias — migração será re-tentada.")
+
+
+def _garantir_colunas_manutencoes() -> None:
+    global _manutencoes_migrada
+    if _manutencoes_migrada:
         return
     try:
+        tipo_texto_60 = "NVARCHAR(60)" if IS_MSSQL else "VARCHAR(60)"
+        tipo_float = "FLOAT" if IS_MSSQL else "REAL"
+        tipo_texto_100 = "NVARCHAR(100)" if IS_MSSQL else "VARCHAR(100)"
+        tipo_texto_longo = "NVARCHAR(MAX)" if IS_MSSQL else "TEXT"
         with engine.begin() as conn:
-            _garantir_coluna_mssql(conn, "Avarias", "custo_reparacao", "FLOAT NULL")
-        _avarias_migrada = True
-        logger.info("Coluna Avarias.custo_reparacao garantida.")
+            _garantir_coluna_mssql(conn, "Manutencoes", "tipo_intervencao", f"{tipo_texto_60} NULL")
+            _garantir_coluna_mssql(conn, "Manutencoes", "custo_eur", f"{tipo_float} NULL")
+            _garantir_coluna_mssql(conn, "Manutencoes", "referencia_sc_po", f"{tipo_texto_100} NULL")
+            _garantir_coluna_mssql(conn, "Manutencoes", "observacoes_externas", f"{tipo_texto_longo} NULL")
+        _manutencoes_migrada = True
+        logger.info(
+            "Colunas Manutencoes (tipo_intervencao, custo_eur, referencia_sc_po, observacoes_externas) garantidas."
+        )
     except Exception:
-        logger.warning("Não foi possível garantir coluna Avarias.custo_reparacao — migração será re-tentada.")
+        logger.warning("Não foi possível garantir colunas Manutencoes — migração será re-tentada.")
 
 
 def _pdf_escape(texto: str) -> str:
@@ -616,6 +643,7 @@ async def lifespan(app: FastAPI):
     criar_tabelas()
     _garantir_colunas_sessaouso()
     _garantir_colunas_avarias()
+    _garantir_colunas_manutencoes()
     # Limpa tokens expirados ao arrancar para evitar acumulação desnecessária.
     try:
         with Session(engine) as s:
@@ -667,6 +695,9 @@ class EstadoUpdate(BaseModel):
 class AvariaCreate(BaseModel):
     descricao: str
     utilizador_id: Optional[int] = None
+    empresa_externa: Optional[str] = None
+    custo_reparacao: Optional[float] = None
+    num_sc_po: Optional[str] = None
 
 class AvariaResolve(BaseModel):
     relatorio_tecnico: Optional[str] = None
@@ -678,6 +709,10 @@ class ManutencaoCreate(BaseModel):
     periodicidade_dias: Optional[int] = None
     proxima_data: Optional[datetime] = None
     executado_por_id: Optional[int] = None
+    tipo_intervencao: Optional[str] = None
+    custo_eur: Optional[float] = None
+    referencia_sc_po: Optional[str] = None
+    observacoes_externas: Optional[str] = None
 
 class CalibracaoCreate(BaseModel):
     data_realizada: datetime
@@ -2109,6 +2144,9 @@ def registar_avaria(
         equipamento_id=equipamento_id,
         utilizador_id=utilizador.id if utilizador else dados.utilizador_id,
         descricao=dados.descricao,
+        empresa_externa=dados.empresa_externa,
+        custo_reparacao=dados.custo_reparacao,
+        num_sc_po=dados.num_sc_po,
     )
     session.add(avaria)
     
@@ -2281,6 +2319,10 @@ def registar_manutencao(
         periodicidade_dias=dados.periodicidade_dias,
         proxima_data=dados.proxima_data,
         executado_por_id=dados.executado_por_id,
+        tipo_intervencao=dados.tipo_intervencao,
+        custo_eur=dados.custo_eur,
+        referencia_sc_po=dados.referencia_sc_po,
+        observacoes_externas=dados.observacoes_externas,
     )
     eq.estado_atual = EstadoEquipamento.MANUTENCAO.value
     session.add(manutencao)

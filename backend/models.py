@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Optional
 
 from pydantic import ConfigDict
-from sqlalchemy import Column, DateTime, Index, String, Float, Integer, ForeignKey, event, update, insert as sa_insert, inspect as sa_inspect
+from sqlalchemy import Column, DateTime, Index, String, Text, Float, Integer, Boolean, ForeignKey, event, update, insert as sa_insert, inspect as sa_inspect
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -252,12 +252,14 @@ class Avaria(UTCModel, table=True):
         default=None,
         sa_column=Column("utilizador_id", Integer, ForeignKey("Utilizadores.id"), nullable=True, index=True),
     )
-    descricao: str = Field(sa_column=Column("descricao", String, nullable=False))
+    descricao: str = Field(sa_column=Column("descricao", Text, nullable=False))
     data_registo: datetime = Field(default_factory=utc_now, sa_column=Column(UTCDateTime(), nullable=False, index=True))
     resolvida: bool = Field(default=False, index=True)
     data_resolucao: Optional[datetime] = Field(default=None, sa_column=Column(UTCDateTime(), index=True))
-    notas_resolucao: Optional[str] = Field(default=None)
+    notas_resolucao: Optional[str] = Field(default=None, sa_column=Column(Text))
     custo_reparacao: Optional[float] = Field(default=None, sa_column=Column("custo_reparacao", Float, nullable=True))
+    empresa_externa: Optional[str] = Field(default=None, sa_column=Column(String(150), nullable=True))
+    num_sc_po: Optional[str] = Field(default=None, sa_column=Column(String(100), nullable=True))
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="avarias")
     reportado_por: Optional[Utilizador] = Relationship(back_populates="avarias_reportadas")
@@ -273,11 +275,30 @@ class Manutencao(UTCModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     equipamento_id: int = Field(foreign_key="Equipamentos.id", index=True)
     executado_por_id: Optional[int] = Field(default=None, foreign_key="Utilizadores.id", index=True)
-    descricao: str = Field(sa_column=Column("descricao", String, nullable=False))
+    descricao: str = Field(sa_column=Column("descricao", Text, nullable=False))
     data_realizada: datetime = Field(sa_column=Column(UTCDateTime(), nullable=False, index=True))
     periodicidade_dias: Optional[int] = Field(default=None, index=True)
     proxima_data: Optional[datetime] = Field(default=None, sa_column=Column(UTCDateTime(), index=True))
     criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(UTCDateTime(), nullable=False))
+    tipo_intervencao: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(60)),
+        # Ex: "Diagnóstico", "Reparação Externa", "Preventiva", "Corretiva"
+    )
+    custo_eur: Optional[float] = Field(
+        default=None,
+        # Porquê: rastreabilidade financeira para justificar investimentos
+        # ou comparar custo acumulado vs. substituição do equipamento.
+    )
+    referencia_sc_po: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(100)),
+        # Shopping Cart / Purchase Order — rastreabilidade documental/financeira
+    )
+    observacoes_externas: Optional[str] = Field(
+        default=None,
+        # Campo "Remarks" do Excel: número de proposta, empresa externa, etc.
+    )
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="manutencoes")
     executado_por: Optional[Utilizador] = Relationship(back_populates="manutencoes_executadas")
@@ -354,9 +375,15 @@ class Reserva(UTCModel, table=True):
     data_inicio: datetime = Field(sa_column=Column(UTCDateTime(), nullable=False, index=True))
     data_fim: datetime = Field(sa_column=Column(UTCDateTime(), nullable=False, index=True))
     # Duração estimada do ensaio em minutos (preenchida quando inicia o check-in)
-    duracao_prevista_minutos: Optional[int] = Field(default=None, sa_column=Column("duracao_prevista_minutos", nullable=True, index=True))
+    duracao_prevista_minutos: Optional[int] = Field(
+        default=None,
+        sa_column=Column("duracao_prevista_minutos", Integer, nullable=True, index=True),
+    )
     # Indica se o ensaio foi concluído com sucesso (usado para cálculo de OEE)
-    concluido_com_sucesso: Optional[bool] = Field(default=None, sa_column=Column("concluido_com_sucesso", nullable=True, index=True))
+    concluido_com_sucesso: Optional[bool] = Field(
+        default=None,
+        sa_column=Column("concluido_com_sucesso", Boolean, nullable=True, index=True),
+    )
     # Data/hora de conclusão automática (calculada como data_inicio + duracao_prevista_minutos)
     fim_automatico: Optional[datetime] = Field(default=None, sa_column=Column(UTCDateTime(), nullable=True, index=True))
     notas: Optional[str] = Field(default=None)
@@ -563,6 +590,7 @@ def marcar_equipamento_como_ocupado_por_ensaio(mapper, connection, target) -> No
     )
 
 
+@event.listens_for(Equipamento, "after_insert")
 @event.listens_for(Equipamento, "after_update")
 def criar_avaria_se_transitou_para_avariado(mapper, connection, target) -> None:
     """Cria automaticamente registo de Avaria quando o estado passa para 'Avariado'.
