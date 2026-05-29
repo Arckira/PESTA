@@ -3,11 +3,13 @@ import { QRCodeCanvas } from 'qrcode.react'
 import labLogo from '../../assets/industrial-testing-lab-logo.png'
 import styles from './QRCodeDisplay.module.css'
 import { QR_FRONTEND_BASE } from '../../utils/config'
+import { useLanguage } from '../../contexts/useLanguage.js'
 
 const QR_ERROR_LEVEL = 'H'
 
 const QRCodeDisplay = forwardRef(function QRCodeDisplay({ equipamento }, ref) {
   const canvasRef = useRef(null)
+  const { t } = useLanguage()
 
   // URL determinística: baseia-se apenas no ID persistente do equipamento.
   // QR_FRONTEND_BASE resolve para o IP da rede local, permitindo leitura por telemóvel.
@@ -70,7 +72,7 @@ const QRCodeDisplay = forwardRef(function QRCodeDisplay({ equipamento }, ref) {
 
   return (
     <div className={styles.wrap}>
-      <div className="label" style={{ marginBottom: 12 }}>QR Code do Equipamento</div>
+      <div className="label" style={{ marginBottom: 12 }}>{t('detalhe.qrCodeTitulo')}</div>
 
       <div className={styles.preview}>
         <div ref={canvasRef}>
@@ -89,11 +91,11 @@ const QRCodeDisplay = forwardRef(function QRCodeDisplay({ equipamento }, ref) {
       </div>
 
       <button className={styles.btnPrint} onClick={handlePrint}>
-        ⎙ Imprimir Etiqueta
+        ⎙ {t('detalhe.imprimirEtiqueta')}
       </button>
 
       <p className={styles.hint}>
-        Lê com a câmara do telemóvel para abrir directamente no browser.
+        {t('detalhe.qrCodeInstrucao')}
       </p>
     </div>
   )

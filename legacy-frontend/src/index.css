@@ -115,3 +115,8 @@ input, select, textarea { font-family: inherit; }
 
 .badge-disponivel { background: var(--green-glow); border-color: var(--green); color: var(--green); }
 .badge-disponivel::before { background: var(--green); animation: pulse 2s infinite; }
+.badge-limitado {
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}

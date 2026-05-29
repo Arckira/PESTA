@@ -14,6 +14,160 @@
   margin-top: 4px;
 }
 
+/* --- Chips de Categoria --- */
+.categoryTabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.categoryChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all var(--transition);
+  user-select: none;
+}
+
+.categoryChip:hover:not(.categoryChipActive) {
+  border-color: var(--border-bright);
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.categoryChipActive {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: #000;
+  font-weight: 700;
+}
+
+.categoryChipCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(0,0,0,0.12);
+}
+
+.categoryHeaderRow {
+  cursor: pointer;
+  user-select: none;
+}
+
+.categoryHeaderRow:hover td {
+  background: var(--bg-hover);
+}
+
+.categoryHeaderRow td {
+  padding: 8px 14px;
+  background: var(--bg-panel);
+  border-top: 2px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.categoryHeaderContent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.categoryHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Roda 90° quando expandido (aponta para baixo); volta a 0° quando colapsado (aponta para a direita) */
+.categoryChevron {
+  font-size: 16px;
+  color: var(--text-dim);
+  transition: transform 0.2s ease;
+  display: inline-block;
+  transform: rotate(90deg);
+  line-height: 1;
+}
+
+.categoryChevronCollapsed {
+  transform: rotate(0deg);
+}
+
+.categoryHeaderIcon {
+  font-size: 13px;
+}
+
+.categoryHeaderLabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 700;
+}
+
+.categoryHeaderCount {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.6;
+  font-weight: 400;
+}
+
+.categoryHeaderBadges {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.miniStateBadge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  opacity: 0.8;
+}
+
+.miniStateBadgeOk     { color: #15803d; }
+.miniStateBadgeNok    { color: var(--red); }
+.miniStateBadgeOcupado { color: var(--amber); }
+
+.collapseControls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.btnCollapseAll {
+  background: transparent;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  padding: 4px 0;
+  transition: color var(--transition);
+}
+
+.btnCollapseAll:hover {
+  color: var(--text-secondary);
+}
+
 /* --- Filters --- */
 .filters {
   display: flex;
@@ -739,4 +893,27 @@
   .horizontalRow {
     grid-template-columns: 1fr;
   }
+}
+
+.rowAvariado td {
+  background: rgba(200, 16, 46, 0.04) !important;
+}
+
+.rowAvariado td:first-child {
+  border-left: 3px solid var(--red);
+  padding-left: 11px;
+}
+
+.rowAvariado:hover td {
+  background: rgba(200, 16, 46, 0.08) !important;
+}
+
+.rowAvariadoIcon {
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 12px;
+  color: var(--red);
+  vertical-align: middle;
+  line-height: 1;
+  opacity: 0.85;
 }

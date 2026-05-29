@@ -1,16 +1,13 @@
 import React from 'react'
+import { useLanguage } from '../contexts/useLanguage.js'
 
-/**
- * `StatusBadge` unifica dois usos:
- * - Uso simples: `<StatusBadge variant="ok">Texto</StatusBadge>`
- * - Uso com estado do backend: `<StatusBadge estado={estado} />`
- */
 const MAP = {
-  'Disponível': { cls: 'badge-disponivel', label: 'Disponível' },
-  'Avariado': { cls: 'badge-nok', label: 'Avariado' },
-  'Ocupado': { cls: 'badge-ocupado', label: 'Ocupado' },
-  'Em calibração': { cls: 'badge-calib', label: 'Em Calibração' },
-  'Em manutenção': { cls: 'badge-manut', label: 'Em Manutenção' },
+  'Disponível':    { cls: 'badge-disponivel', labelKey: 'status.disponivel' },
+  'Avariado':      { cls: 'badge-nok',        labelKey: 'status.avariado' },
+  'Ocupado':       { cls: 'badge-ocupado',    labelKey: 'status.ocupado' },
+  'Em calibração': { cls: 'badge-calib',      labelKey: 'status.emCalibracao' },
+  'Em manutenção': { cls: 'badge-manut',      labelKey: 'status.emManutencao' },
+  'Degradado':     { cls: 'badge-limitado',   labelKey: 'status.degradado' },
 }
 
 const LEGACY_MAP = {
@@ -26,9 +23,12 @@ export function normalizarEstadoEquipamento(estado) {
 }
 
 function StatusBadge({ variant = 'neutral', children, estado }) {
+  const { t } = useLanguage()
+
   if (estado !== undefined) {
     const estadoNormalizado = normalizarEstadoEquipamento(estado)
-    const { cls, label } = MAP[estadoNormalizado] ?? { cls: 'badge-nok', label: estadoNormalizado ?? '—' }
+    const { cls, labelKey } = MAP[estadoNormalizado] ?? { cls: 'badge-nok', labelKey: null }
+    const label = labelKey ? t(labelKey) : (estadoNormalizado ?? '—')
     return <span className={`badge ${cls}`}>{label}</span>
   }
 

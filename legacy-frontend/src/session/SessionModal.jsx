@@ -1,3 +1,8 @@
+/**
+ * @deprecated LEGADO — NÃO UTILIZADO EM PRODUÇÃO
+ * Modal de seleção de utilizador para o SessionProvider (sistema alternativo).
+ * O fluxo de autenticação ativo usa LoginModal + AuthContext.
+ */
 import styles from './SessionModal.module.css'
 
 function formatRole(user) {

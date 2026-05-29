@@ -79,6 +79,7 @@ export function AuthProvider({ children }) {
     }
 
     setStoredToken(restored.token)
+    let syncFeitaNoCatch = false
     api.authMe()
       .then((utilizador) => {
         const merged = { ...restored, utilizador }
@@ -87,14 +88,20 @@ export function AuthProvider({ children }) {
         localStorage.setItem(LAST_USER_STORAGE_KEY, String(utilizador.id))
       })
       .catch(() => {
+        syncFeitaNoCatch = true
         clearSessionStorage()
         syncBootstrapStatus({ abrirSetup: true })
       })
       .finally(() => {
-        syncBootstrapStatus().finally(() => {
+        if (!syncFeitaNoCatch) {
+          syncBootstrapStatus().finally(() => {
+            clearTimeout(startupTimer)
+            setIsLoading(false)
+          })
+        } else {
           clearTimeout(startupTimer)
           setIsLoading(false)
-        })
+        }
       })
   }, [])
 

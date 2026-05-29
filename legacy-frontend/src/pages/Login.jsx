@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext.jsx'
+import { useLanguage } from '../contexts/useLanguage.js'
 import { getPostLoginPath, LOGIN_PATH } from '../contexts/authNavigation.js'
 
 const cardStyle = {
@@ -17,6 +18,7 @@ export default function Login() {
   const location = useLocation()
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { t } = useLanguage()
 
   useEffect(() => {
     if (user) {
@@ -28,7 +30,6 @@ export default function Login() {
   useEffect(() => {
     if (user) return
 
-    // Mantem o utilizador no fluxo de autenticacao quando tenta recuar sem sessao valida.
     window.history.pushState({ labLoginLock: true }, '', window.location.href)
 
     const handlePopState = () => {
@@ -41,10 +42,10 @@ export default function Login() {
 
   return (
     <section style={cardStyle}>
-      <div className="label">Autenticacao</div>
-      <h1 style={{ margin: '8px 0 12px', fontSize: '2rem', lineHeight: 1.1 }}>Introduz o teu PIN</h1>
+      <div className="label">{t('auth.title')}</div>
+      <h1 style={{ margin: '8px 0 12px', fontSize: '2rem', lineHeight: 1.1 }}>{t('auth.enterPin')}</h1>
       <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
-        A autenticacao e obrigatoria para aceder as areas privadas do sistema.
+        {t('auth.pinRequired')}
       </p>
     </section>
   )

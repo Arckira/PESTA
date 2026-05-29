@@ -47,7 +47,7 @@ export default function App() {
           path="/equipamentos/:id/reserva"
           element={(
             <ProtectedRoute allowedRoles={['admin', 'user']}>
-              <Reservas startOpenModal />
+              <Layout><Reservas startOpenModal /></Layout>
             </ProtectedRoute>
           )}
         />

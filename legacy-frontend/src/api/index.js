@@ -1,3 +1,5 @@
+import { requestAuthPrompt } from '../contexts/authBridge.js'
+
 // BASE sem /api — o proxy do Vite trata de redirecionar /api/* → FastAPI:8000/*
 // Porquê: centralizar aqui evita inconsistências entre páginas
 const BASE = '/api'
@@ -35,7 +37,6 @@ async function request(path, options = {}, attempt = 0) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     if (isAuthError(res.status) && attempt === 0 && !noAuthPrompt) {
-      const { requestAuthPrompt } = await import('../contexts/authBridge.js')
       const mode = String(err.detail || '').includes('PIN inicial') ? 'change-pin' : 'login'
       await requestAuthPrompt(mode)
       return request(path, options, 1)
@@ -85,6 +86,7 @@ export const api = {
   iniciarCheckin:         (id, reserva_id = null, duracao_prevista_minutos = null, projeto = null, metodo = null) =>
     request(`/equipamentos/${id}/checkin`, { method: 'POST', body: JSON.stringify({ reserva_id, duracao_prevista_minutos, projeto, metodo }) }),
   obterSessaoAtiva:       (id)          => request(`/equipamentos/${id}/sessao-ativa`),
+  obterSessaoEmCurso:     (id)          => request(`/equipamentos/${id}/sessao-em-curso`),
   editarDuracaoSessao:    (id, duracao_prevista_minutos) =>
     request(`/equipamentos/${id}/sessao-ativa/duracao`, { method: 'PATCH', body: JSON.stringify({ duracao_prevista_minutos }) }),
   terminarCheckout:       (id)          => request(`/equipamentos/${id}/checkout`, { method: 'PATCH' }),
@@ -95,7 +97,7 @@ export const api = {
   // ── Avarias ──
   listarAvarias:          (equipamentoId) => request(`/equipamentos/${equipamentoId}/avarias`),
   listarTodasAvarias:     (resolvida)     => request(`/avarias${resolvida !== undefined ? `?resolvida=${resolvida}` : ''}`),
-  registarAvaria:         (id, descricao) => request(`/equipamentos/${id}/avaria`, { method: 'POST', body: JSON.stringify({ descricao }) }),
+  registarAvaria:         (id, payload) => request(`/equipamentos/${id}/avaria`, { method: 'POST', body: JSON.stringify(payload) }),
   exportarAvariasPdf:     async ({ resolvida, pesquisa } = {}) => {
     const token = getStoredToken()
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
@@ -155,7 +157,7 @@ export const api = {
   listarReservas:         ()              => request('/reservas'),
   reservasPorDia:         (data)          => request(`/reservas/por-dia?data=${data}`),
   criarReserva:           (data)          => request('/reservas', { method: 'POST', body: JSON.stringify(data) }),
-  atualizarReserva:       (id, data)      => request(`/reservas/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  atualizarReserva:       (id, data)      => request(`/reservas/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   exportarReservasPdf:    async ()        => {
     const token = getStoredToken()
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
@@ -176,6 +178,20 @@ export const api = {
     }
     return res.blob()
   },
+  exportarVerificacoesPdf: async ({ filtro = '', resultado = '' } = {}) => {
+    const token = getStoredToken()
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const params = new URLSearchParams()
+    if (filtro)    params.append('filtro', filtro)
+    if (resultado) params.append('resultado', resultado)
+    const query = params.toString()
+    const res = await fetch(`${BASE}/verificacoes/exportar/pdf${query ? `?${query}` : ''}`, { headers })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `Erro ${res.status}`)
+    }
+    return res.blob()
+  },
   cancelarReserva:        (id)            => request(`/reservas/${id}`, { method: 'DELETE' }),
 
   // ── Utilizadores ──
@@ -186,8 +202,35 @@ export const api = {
   adminAlterarRoleUtilizador: (id, role, pin_atual) => request(`/utilizadores/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role, pin_atual }) }),
   eliminarUtilizador:     (id)            => request(`/utilizadores/${id}`, { method: 'DELETE' }),
 
+  // ── Verificações ──
+  listarVerificacoesEquipamento: (equipamentoId) => request(`/equipamentos/${equipamentoId}/verificacoes`),
+  registarVerificacao:           (equipamentoId, data) => request(`/equipamentos/${equipamentoId}/verificacao`, { method: 'POST', body: JSON.stringify(data) }),
+  listarAnexosVerificacao:       (verificacaoId) => request(`/verificacoes/${verificacaoId}/anexos`),
+
+  // ── Financeiro ──
+  resumoFinanceiro: ({ ano, mes, equipamentoId } = {}) => {
+    const params = new URLSearchParams({ ano: ano ?? new Date().getFullYear() })
+    if (mes != null) params.set('mes', mes)
+    if (equipamentoId) params.set('equipamento_id', equipamentoId)
+    return request(`/financeiro/resumo?${params}`)
+  },
+  exportarFinanceiroPdf: async ({ ano, mes, equipamentoId } = {}) => {
+    const token = getStoredToken()
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const params = new URLSearchParams({ ano: ano ?? new Date().getFullYear() })
+    if (mes != null) params.set('mes', mes)
+    if (equipamentoId) params.set('equipamento_id', equipamentoId)
+    const res = await fetch(`${BASE}/financeiro/resumo/exportar/pdf?${params}`, { headers })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `Erro ${res.status}`)
+    }
+    return res.blob()
+  },
+
   // ── Dashboard OEE ──
   oeeGlobal:              (dias = 30)     => request(`/dashboard/oee?dias=${dias}`),
   oeeGlobalSummary:       (dias = 30)     => request(`/stats/oee_summary?dias=${dias}`),
+  oeeHistorico:           (dias = 30)     => request(`/stats/oee_historico?dias=${dias}`),
   oeeEquipamento:         (id, dias = 30) => request(`/metricas/oee/${id}?dias=${dias}`),
 }

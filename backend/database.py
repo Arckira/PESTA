@@ -61,7 +61,21 @@ IS_MSSQL = DATABASE_URL.lower().startswith("mssql")
 
 
 def _criar_engine() -> Engine:
-    """Cria engine SQLite com WAL mode para concorrência de leitura e chaves estrangeiras ativas."""
+    """Cria engine SQLite com WAL mode para concorrência de leitura e chaves estrangeiras ativas.
+
+    Porquê listener em vez de PRAGMA direto:
+        No SQLite, os PRAGMAs são connection-scoped — aplicar uma vez na conexão
+        de teste do arranque não garante que novas conexões do pool os herdem.
+        O evento 'connect' do SQLAlchemy é disparado para CADA nova conexão
+        criada pelo pool, garantindo que WAL, FKs e busy_timeout estão sempre ativos.
+
+    busy_timeout=5000:
+        Em ambiente de laboratório com múltiplos técnicos a fazer check-in via
+        QR Code em simultâneo, o SQLite pode retornar 'database is locked'
+        imediatamente quando existe um write lock ativo. Com 5000ms de timeout,
+        o motor retenta automaticamente durante 5 segundos antes de falhar,
+        eliminando virtualmente erros de lock transitórios para < 20 utilizadores.
+    """
     try:
         eng = create_engine(
             DATABASE_URL,
@@ -69,9 +83,23 @@ def _criar_engine() -> Engine:
             pool_pre_ping=True,
             echo=os.getenv("SQL_ECHO", "false").strip().lower() == "true",
         )
-        with eng.connect() as conn:
-            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+        # Aplicar apenas para SQLite — SQL Server gere concorrência de forma diferente
+        if not DATABASE_URL.lower().startswith("mssql"):
+            from sqlalchemy import event as sa_event
+
+            @sa_event.listens_for(eng, "connect")
+            def _configurar_sqlite(dbapi_conn, _connection_record) -> None:
+                """Configura cada nova conexão SQLite com os PRAGMAs obrigatórios."""
+                cursor = dbapi_conn.cursor()
+                # WAL permite leituras concorrentes sem bloquear escritas
+                cursor.execute("PRAGMA journal_mode=WAL")
+                # Ativa integridade referencial (desativada por omissão no SQLite)
+                cursor.execute("PRAGMA foreign_keys=ON")
+                # Espera até 5s antes de lançar 'database is locked'
+                cursor.execute("PRAGMA busy_timeout=5000")
+                cursor.close()
+
         return eng
     except SQLAlchemyError as exc:
         logger.exception("Falha ao criar a engine da base de dados")

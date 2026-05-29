@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { History, Play } from 'lucide-react'
+import { History, LogIn, LogOut, Clock } from 'lucide-react'
 import {
   faBuilding,
   faCalendarDays,
@@ -9,6 +9,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/index.js'
 import { useAuth } from '../contexts/AuthContext.jsx'
+import { useLanguage } from '../contexts/useLanguage.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 import QRCodeDisplay from '../components/QRCode/QRCodeDisplay.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
@@ -26,14 +27,15 @@ const ESTADOS = [
   'Disponível',
   'Ocupado',
   'Avariado',
+  'Degradado',
   'Em calibração',
   'Em manutenção',
 ]
 
-function fmt(dt) {
+function fmt(dt, locale = 'pt-PT') {
   if (!dt) return '—'
 
-  return new Date(dt).toLocaleDateString('pt-PT', {
+  return new Date(dt).toLocaleDateString(locale, {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
@@ -42,29 +44,34 @@ function fmt(dt) {
   })
 }
 
-function formatarDataHora(dt) {
+function formatarDataHora(dt, t) {
   if (!dt) return '—'
-  
+
   const data = new Date(dt)
   const dia = String(data.getDate()).padStart(2, '0')
   const mes = String(data.getMonth() + 1).padStart(2, '0')
   const ano = data.getFullYear()
   const hora = String(data.getHours()).padStart(2, '0')
   const minuto = String(data.getMinutes()).padStart(2, '0')
-  
-  return `${dia}/${mes}/${ano} às ${hora}:${minuto}`
+
+  return `${dia}/${mes}/${ano} ${t ? t('detalhe.as') : 'às'} ${hora}:${minuto}`
 }
 
-function formatTempoRestante(fimAutomatico) {
+function formatTempoRestante(fimAutomatico, t) {
   if (!fimAutomatico) return null
   const diffMs = new Date(fimAutomatico).getTime() - Date.now()
-  if (diffMs <= 0) return 'Tempo previsto ultrapassado'
+  if (diffMs <= 0) return t ? t('detalhe.tempoPrevUltrapassado') : 'Tempo previsto ultrapassado'
 
   const totalMin = Math.ceil(diffMs / 60000)
   const dias = Math.floor(totalMin / (24 * 60))
   const horas = Math.floor((totalMin % (24 * 60)) / 60)
   const minutos = totalMin % 60
 
+  if (t) {
+    if (dias > 0) return t('detalhe.faltamDHM', { dias, horas, minutos })
+    if (horas > 0) return t('detalhe.faltamHM', { horas, minutos })
+    return t('detalhe.faltamM', { minutos })
+  }
   if (dias > 0) return `Faltam ${dias}d ${horas}h ${minutos}m`
   if (horas > 0) return `Faltam ${horas}h ${minutos}m`
   return `Faltam ${minutos}m`
@@ -76,6 +83,9 @@ export default function DetalheEquipamento() {
   const [searchParams] = useSearchParams()
   const toast = useToast()
   const { user, openAuthPrompt } = useAuth()
+  const { t, lang } = useLanguage()
+  const locale = lang === 'pt' ? 'pt-PT' : 'en-GB'
+  const tCategoria = (tipo) => { const k = `categorias.${tipo}`; const v = t(k); return v === k ? tipo : v }
   // Parâmetro injetado pelo QR Code: ?action=checkin
   const acaoQR = searchParams.get('action')
   const [eq, setEq] = useState(null)
@@ -107,10 +117,36 @@ export default function DetalheEquipamento() {
   const [modalTermino, setModalTermino] = useState(false)
   const [savingTermino, setSavingTermino] = useState(false)
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false)
+  const [exportandoPDF, setExportandoPDF] = useState(false)
+  const [tempoDecorrido, setTempoDecorrido] = useState(null) // minutos desde inicio da sessão
+  const [sessaoEmCurso, setSessaoEmCurso] = useState(null)  // sessão ativa pública (sem filtro de utilizador)
+  const [modalConfirmacaoCalib, setModalConfirmacaoCalib] = useState(false)
   const autoReloadTimerRef = useRef(null)
+  const oeeDataFetchedAtRef = useRef(null)
   const qrRef = useRef(null)
   // Garante que a ação QR só é processada uma vez por montagem do componente
   const qrAcaoProcessadaRef = useRef(false)
+  // Registo de exceção: true quando o utilizador avança com calibração inválida
+  const calibExcecaoRef = useRef(false)
+
+  // Derivar data_proxima_calibracao: preferir valor do backend; usar calibrações carregadas
+  // como alternativa robusta (comparação por String() para evitar erros de tipo int vs string).
+  const calibracoesDoEq = calibracoes.filter(c => String(c.equipamento_id) === String(id))
+  const dataProximaCalib = eq?.data_proxima_calibracao
+    ?? calibracoesDoEq.find(c => c.proxima_data != null)?.proxima_data
+    ?? null
+
+  // Flags de calibração — calculadas a partir de dataProximaCalib para uso nos handlers e na UI
+  const diasParaCalib = (() => {
+    if (!dataProximaCalib) return null
+    const hoje = new Date()
+    hoje.setHours(0, 0, 0, 0)
+    const data = new Date(dataProximaCalib)
+    data.setHours(0, 0, 0, 0)
+    return Math.ceil((data.getTime() - hoje.getTime()) / 86400000)
+  })()
+  const calibExpirada = diasParaCalib !== null && diasParaCalib < 0
+  const calibPrestesExp = diasParaCalib !== null && diasParaCalib >= 0 && diasParaCalib < 30
 
   const resetAvaria = () => {
     setDescAvaria('')
@@ -128,12 +164,13 @@ export default function DetalheEquipamento() {
       setLoading(true)
       setErro(null)
 
-      const [eqData, av, mn, cal, sessaoRes] = await Promise.all([
+      const [eqData, av, mn, cal, sessaoRes, emCurso] = await Promise.all([
         api.detalheEquipamento(id),
         api.listarAvarias(id),
         api.listarManutencoes(id),
         api.listarCalibracoes(id),
         api.obterSessaoAtiva(id).catch(() => ({})),  // Ignora erros se não houver sessão
+        api.obterSessaoEmCurso(id).catch(() => ({})),
       ])
 
       setEq(eqData)
@@ -143,6 +180,7 @@ export default function DetalheEquipamento() {
       setCalibracoes(cal)
       setSessaoAtiva(sessaoRes?.sessao || null)
       setReservaAtiva(sessaoRes?.reserva || null)
+      setSessaoEmCurso(emCurso?.inicio ? emCurso : null)
     } catch (e) {
       setErro(e.message)
     } finally {
@@ -156,8 +194,28 @@ export default function DetalheEquipamento() {
 
   useEffect(() => {
     if (!id) return
-    api.oeeEquipamento(id, 30).then(setOeeData).catch(() => {})
+    api.oeeEquipamento(id, 30).then((data) => {
+      oeeDataFetchedAtRef.current = Date.now()
+      setOeeData(data)
+    }).catch(() => {})
   }, [id])
+
+  // Atualiza o tempo decorrido da sessão ativa a cada minuto
+  // Usa sessaoAtiva (user atual) ou sessaoEmCurso (pública) como fallback
+  const inicioSessao = sessaoAtiva?.inicio ?? sessaoEmCurso?.inicio ?? null
+  useEffect(() => {
+    if (!inicioSessao) {
+      setTempoDecorrido(null)
+      return
+    }
+    const calcular = () => {
+      const diffMs = Date.now() - new Date(inicioSessao).getTime()
+      setTempoDecorrido(Math.max(0, Math.floor(diffMs / 60000)))
+    }
+    calcular()
+    const interval = setInterval(calcular, 60000)
+    return () => clearInterval(interval)
+  }, [inicioSessao])
 
   // Quando existe fim_automatico, agenda um setTimeout preciso para recarregar
   // assim que o tempo expirar — sem polling e sem flickering.
@@ -199,9 +257,13 @@ export default function DetalheEquipamento() {
     // Operador autenticado: abrir modal de check-in automaticamente se o equipamento o permitir
     if (!sessaoAtiva && eq?.estado_atual !== 'Ocupado') {
       setModoEdicao(false)
-      setModalDuracao(true)
+      if (diasParaCalib !== null && diasParaCalib < 30) {
+        setModalConfirmacaoCalib(true)
+      } else {
+        setModalDuracao(true)
+      }
     } else if (sessaoAtiva) {
-      toast.info?.('Já existe uma sessão ativa neste equipamento.')
+      toast.info?.(t('detalhe.sessaoJaAtiva'))
     }
   }, [loading, acaoQR, user, sessaoAtiva, eq, id, openAuthPrompt, toast])
 
@@ -210,7 +272,7 @@ export default function DetalheEquipamento() {
       setSavingEstado(true)
       await api.atualizarEstado(id, novoEstado)
       setModalEstado(false)
-      toast.success('Estado atualizado.')
+      toast.success(t('detalhe.estadoAtualizado'))
       carregar()
     } catch (e) {
       toast.error(e.message)
@@ -223,8 +285,17 @@ export default function DetalheEquipamento() {
     if (!descAvaria.trim()) return
     setSavingAvaria(true)
     try {
-      const res = await api.registarAvaria(id, descAvaria)
-      setMsgAvaria(res.mensagem || 'Avaria registada!')
+      // Mapear o toggle de paragem para o campo severidade esperado pelo backend:
+      // toggle activo (paragem total do equipamento) → BLOQUEANTE (impede check-in, protege OEE);
+      // toggle inactivo (falha não-bloqueante)        → ALERTA    (activa Modo Limitado, permite check-in com precaução).
+      const severidade = paragemEquipamento ? 'BLOQUEANTE' : 'ALERTA'
+      const res = await api.registarAvaria(id, {
+        descricao: descAvaria,
+        severidade,
+        custo_reparacao: custoAvaria ? parseFloat(custoAvaria) : undefined,
+        num_sc_po: scPoAvaria || undefined,
+      })
+      setMsgAvaria(res.mensagem || t('detalhe.avariaRegistada'))
       setDescAvaria('')
       setDataRegisto(formatDateTimeLocal())
       setEmpresaExterna(false)
@@ -245,9 +316,13 @@ export default function DetalheEquipamento() {
     }
   }
 
-  const handleCheckin = async () => {
+  const handleCheckin = () => {
     setModoEdicao(!!sessaoAtiva)
-    setModalDuracao(true)
+    if ((calibExpirada || calibPrestesExp) && !sessaoAtiva) {
+      setModalConfirmacaoCalib(true)
+    } else {
+      setModalDuracao(true)
+    }
   }
 
   const handleForcarTermino = () => {
@@ -267,11 +342,11 @@ export default function DetalheEquipamento() {
       setReservaAtiva(null)
 
       setModalTermino(false)
-      toast.success('Sessão terminada com sucesso.')
+      toast.success(t('detalhe.sessaoTerminada'))
       carregar()
     } catch (e) {
       console.error('[ForçarTérmino] erro=', e)
-      toast.error(e.message || 'Não foi possível forçar término.')
+      toast.error(e.message || t('detalhe.erroForcaTermino'))
     } finally {
       setSavingTermino(false)
     }
@@ -282,16 +357,72 @@ export default function DetalheEquipamento() {
     setModalDuracao(true)
   }
 
+  // Stub IoT: preparado para integrar com endpoint de relatório da máquina.
+  // Quando o backend expuser GET /api/equipamentos/{id}/relatorio-sessao/{sessao_id},
+  // basta remover o atributo `disabled` do botão e esta função ficará operacional.
+  const handleObterRelatorio = useCallback(async () => {
+    if (!sessaoAtiva) return
+    try {
+      const token = localStorage.getItem('lab_auth_token')
+      const res = await fetch(`/api/equipamentos/${id}/relatorio-sessao/${sessaoAtiva.id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`Erro ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `relatorio_eq${id}_sessao${sessaoAtiva.id}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error(t('detalhe.relatorioIndisponivel'))
+    }
+  }, [id, sessaoAtiva, toast])
+
+  const handleExportarPDF = async () => {
+    if (exportandoPDF) return
+    setExportandoPDF(true)
+    try {
+      const token = localStorage.getItem('lab_auth_token')
+      const resposta = await fetch(`/api/equipamentos/${id}/exportar-pdf`, {
+        method: 'GET',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!resposta.ok) throw new Error(`Erro ${resposta.status}`)
+      const blob = await resposta.blob()
+      const urlDeDownload = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = urlDeDownload
+      link.setAttribute('download', `Relatorio_Ativo_${id}.pdf`)
+      document.body.appendChild(link)
+      link.click()
+      link.parentNode.removeChild(link)
+      window.URL.revokeObjectURL(urlDeDownload)
+    } catch (e) {
+      toast.error(t('detalhe.relatorioIndisponivel'))
+    } finally {
+      setExportandoPDF(false)
+    }
+  }
+
   const handleConfirmarCheckin = async ({ projeto, metodo, duracaoMinutos }) => {
     const minutos = Math.max(1, duracaoMinutos)
     setSavingCheckin(true)
     try {
       if (modoEdicao) {
         await api.editarDuracaoSessao(id, minutos)
-        toast.success('Duração atualizada com sucesso.')
+        toast.success(t('detalhe.duracaoAtualizada'))
       } else {
         await api.iniciarCheckin(id, null, minutos, projeto, metodo)
-        toast.success('Check-in iniciado com sucesso.')
+        if (calibExcecaoRef.current) {
+          const motivo = calibExpirada
+            ? `calibração expirada há ${Math.abs(diasParaCalib)}d`
+            : `calibração a expirar em ${diasParaCalib}d`
+          console.warn(`[Auditoria] EQ-${String(id).padStart(3, '0')} — Ensaio iniciado com ${motivo}. Utilizador: ${user?.nome || 'desconhecido'}`)
+          calibExcecaoRef.current = false
+        }
+        toast.success(t('detalhe.checkinIniciado'))
       }
       setModalDuracao(false)
       setModoEdicao(false)
@@ -300,13 +431,13 @@ export default function DetalheEquipamento() {
       let mensagem = e.message
       if (e.status === 409) {
         mensagem = modoEdicao
-          ? e.message || 'Erro ao atualizar a duração.'
-          : e.message || 'Equipamento já tem um check-in ativo. Use "Ajustar Duração" para modificar.'
+          ? e.message || t('detalhe.erroAtualizarDuracao')
+          : e.message || t('detalhe.erroCheckinAtivo')
         if (!modoEdicao) setTimeout(() => carregar(), 500)
       } else if (e.status === 400) {
-        mensagem = e.message || 'Não é possível iniciar o ensaio neste momento.'
+        mensagem = e.message || t('detalhe.erroIniciarEnsaio')
       } else if (e.status === 503) {
-        mensagem = 'Erro de ligação ao servidor. Tente novamente.'
+        mensagem = t('detalhe.erroLigacaoServidor')
       }
       toast.error(mensagem)
     } finally {
@@ -320,9 +451,9 @@ export default function DetalheEquipamento() {
         {acaoQR === 'checkin' ? (
           <>
             <div className={styles.loadingQRSpinner} aria-hidden="true" />
-            <span>A validar acesso ao equipamento...</span>
+            <span>{t('detalhe.aValidarAcesso')}</span>
           </>
-        ) : 'A carregar...'}
+        ) : t('detalhe.aCarregar')}
       </div>
     )
   }
@@ -331,10 +462,10 @@ export default function DetalheEquipamento() {
     return (
       <div className={styles.erroContainer}>
         <div className={styles.erroIcon}>!</div>
-        <div className={styles.erroTitulo}>Equipamento não encontrado</div>
+        <div className={styles.erroTitulo}>{t('detalhe.equipNaoEncontrado')}</div>
         <div className={styles.erroDetalhe}>{erro}</div>
         <button className={styles.back} onClick={() => navigate('/equipamentos')}>
-          ← Voltar à lista
+          {t('detalhe.voltarLista')}
         </button>
       </div>
     )
@@ -345,6 +476,17 @@ export default function DetalheEquipamento() {
   const shareUrl = `${window.location.origin}/equipamentos/${id}`
   const avariasAbertas = avarias.filter((a) => !a.resolvida).length
 
+  // OEE dinâmico: incrementa tempo_real_h com o tempo decorrido desde a última fetch da API
+  const tempoRealDinamico = (() => {
+    if (!oeeData) return 0
+    if (eq?.estado_atual !== 'Ocupado' || !inicioSessao || !oeeDataFetchedAtRef.current) return oeeData.tempo_real_h
+    const elapsedH = (Date.now() - oeeDataFetchedAtRef.current) / 3600000
+    return oeeData.tempo_real_h + elapsedH
+  })()
+  const oeePctDinamico = oeeData && oeeData.tempo_planeado_h > 0
+    ? Math.min(100, (tempoRealDinamico / oeeData.tempo_planeado_h) * 100)
+    : (oeeData?.oee_pct ?? 0)
+
   return (
     <div className="fade-up">
       <div className={styles.breadcrumb}>
@@ -352,7 +494,7 @@ export default function DetalheEquipamento() {
           onClick={() => navigate('/equipamentos')}
           className={styles.back}
         >
-          ← Equipamentos
+          {t('detalhe.voltarEquipamentos')}
         </button>
 
         <span className={styles.sep}>/</span>
@@ -372,89 +514,160 @@ export default function DetalheEquipamento() {
           </div>
         </div>
 
-        <StatusBadge estado={eq.estado_atual} />
           <button
             type="button"
             onClick={() => setShowHistoryDrawer(true)}
-            title="Consultar registos de utilização e eventos deste ativo"
+            title={t('detalhe.historyTooltip')}
             className={styles.btnHistory}
           >
             <History size={16} />
-            <span>Ver Histórico</span>
+            <span>{t('detalhe.verHistorico')}</span>
           </button>
       </div>
 
       <div className={styles.infoGrid}>
-        <Card label="Estado Atual">
+        <Card label={t('detalhe.estadoAtual')}>
           <StatusBadge estado={eq.estado_atual} />
         </Card>
 
-        <Card label="Tipo">{eq.tipo}</Card>
+        <Card label={t('common.type')}>{tCategoria(eq.tipo)}</Card>
 
-        <Card label="Localização">{eq.localizacao}</Card>
+        <Card label={t('common.location')}>{eq.localizacao}</Card>
 
-        <Card label="Registado em">
-          {fmt(eq.criado_em)}
+        <Card label={t('detalhe.proximaCalib')}>
+          {(() => {
+            const dataCalib = dataProximaCalib
+            if (!dataCalib) return <span style={{ color: 'var(--text-dim)' }}>{t('detalhe.naoDefinida')}</span>
+            const hoje = new Date()
+            hoje.setHours(0, 0, 0, 0)
+            const data = new Date(dataCalib)
+            data.setHours(0, 0, 0, 0)
+            const diasRestantes = Math.ceil((data.getTime() - hoje.getTime()) / 86400000)
+            const formatted = data.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' })
+            const cor = diasRestantes < 0 ? '#dc2626' : diasRestantes < 30 ? '#f59e0b' : 'inherit'
+            return <span style={{ color: cor, fontWeight: diasRestantes < 30 ? 600 : 'inherit' }}>{formatted}</span>
+          })()}
         </Card>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6, paddingLeft: 2 }}>
+        {t('detalhe.registadoEm', { data: fmt(eq.criado_em, locale) })}
       </div>
 
       <div className={styles.section}>
         <div className="label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          Controlo OEE
+          {t('detalhe.oeeCardTitulo')}
           <span
-            title="OEE baseado na relação entre tempo de uso real e tempo reservado"
+            title={t('detalhe.oeeTooltip')}
             style={{ cursor: 'help', fontSize: 12, color: 'var(--text-dim)', border: '1px solid var(--text-dim)', borderRadius: '50%', width: 16, height: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
           >
             ?
           </span>
         </div>
 
+        {eq.estado_atual === 'Ocupado' && inicioSessao && (() => {
+            const fimAuto = reservaAtiva?.fim_automatico ?? sessaoEmCurso?.fim_automatico ?? null
+            const tempoRestante = formatTempoRestante(fimAuto, t)
+            const tempoExcedido = fimAuto && new Date(fimAuto) <= new Date()
+            return (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                marginBottom: 12,
+                padding: '8px 12px',
+                background: 'color-mix(in srgb, #475569 10%, transparent)',
+                border: '1px solid #475569',
+                borderRadius: 'var(--radius)',
+                color: '#475569',
+                fontSize: 13,
+                flexWrap: 'wrap',
+              }}>
+                <Clock size={14} strokeWidth={2} />
+                <span>
+                  <strong>{t('detalhe.emCursoDesde')}</strong> {formatarDataHora(inicioSessao, t)}
+                </span>
+                <span>·</span>
+                <span>
+                  <strong>{t('detalhe.duracao')}</strong>{' '}
+                  {tempoDecorrido != null
+                    ? tempoDecorrido < 60
+                      ? `${tempoDecorrido}m`
+                      : `${Math.floor(tempoDecorrido / 60)}h ${tempoDecorrido % 60}m`
+                    : '—'}
+                </span>
+                {tempoRestante && (
+                  <>
+                    <span>·</span>
+                    <span style={{ color: tempoExcedido ? '#dc2626' : '#475569' }}>
+                      {tempoRestante}
+                    </span>
+                  </>
+                )}
+              </div>
+            )
+          })()}
+
         {oeeData && (
           <div style={{ display: 'flex', gap: 24, marginBottom: 16, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>OEE (Temporal)</span>
+              <span style={{ fontSize: 12, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('detalhe.oeeCardOeeTemporal')}</span>
               <span style={{
                 fontSize: 28,
                 fontWeight: 700,
                 fontFamily: 'var(--font-display)',
-                color: oeeData.oee_pct >= 85 ? '#10b981' : oeeData.oee_pct >= 50 ? '#f59e0b' : '#c8102e',
+                color: oeePctDinamico >= 85 ? '#10b981' : oeePctDinamico >= 50 ? '#f59e0b' : '#c8102e',
               }}>
-                {oeeData.oee_pct != null ? `${oeeData.oee_pct.toFixed(1)}%` : '—'}
+                {`${oeePctDinamico.toFixed(1)}%`}
               </span>
               <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-                {oeeData.tempo_real_h.toFixed(1)}h reais / {oeeData.tempo_planeado_h.toFixed(1)}h planeadas
+                {t('detalhe.oeeCardHorasSufixo', { reais: tempoRealDinamico.toFixed(1), planeadas: oeeData.tempo_planeado_h.toFixed(1) })}
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Taxa Sucesso Planeamento</span>
+              <span style={{ fontSize: 12, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{t('detalhe.oeeCardTaxaSucesso')}</span>
               <span style={{ fontSize: 22, fontWeight: 600, color: 'var(--text-secondary)' }}>
                 {oeeData.taxa_sucesso_planeamento_pct != null ? `${oeeData.taxa_sucesso_planeamento_pct.toFixed(1)}%` : '—'}
               </span>
               <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-                {oeeData.reservas_sucesso}/{oeeData.total_reservas} reservas concluídas
+                {t('detalhe.oeeCardReservasSufixo', { atual: oeeData.reservas_sucesso, total: oeeData.total_reservas })}
               </span>
             </div>
           </div>
         )}
 
         <div className={styles.acoes}>
-          {/* Mostrar "Iniciar Check-in" apenas quando disponível e sem sessão ativa */}
-          {!sessaoAtiva && eq.estado_atual === 'Disponível' && (
-            <button
-              className={styles.btnCheckIn}
-              onClick={handleCheckin}
-            >
-              <Play size={18} />
-              Iniciar Check-in
-            </button>
+          {/* Mostrar "Iniciar Sessão" quando Disponível ou Limitado (Modo Limitado permite check-in com precaução) */}
+          {!sessaoAtiva && (eq.estado_atual === 'Disponível' || eq.estado_atual === 'Degradado') && (
+            <>
+              {eq.estado_atual === 'Degradado' && (
+                <div
+                  className={styles.bannerAmber}
+                  role="alert"
+                  aria-live="polite"
+                >
+                  {t('detalhe.bannerDegradado')}
+                </div>
+              )}
+              <button
+                className={styles.btnCheckIn}
+                onClick={handleCheckin}
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
+                <LogIn size={18} />
+                {eq.estado_atual === 'Degradado'
+                  ? t('detalhe.btnCheckInDegradado')
+                  : t('detalhe.oeeCardBotaoCheckin')}
+              </button>
+            </>
           )}
 
-          {/* Bloqueio visual para estados que impedem check-in */}
-          {!sessaoAtiva && eq.estado_atual !== 'Disponível' && eq.estado_atual !== 'Ocupado' && (() => {
+          {/* Bloqueio visual para estados que impedem check-in.
+              'Limitado' está intencionalmente ausente: não é um bloqueio — permite check-in em Modo Limitado. */}
+          {!sessaoAtiva && eq.estado_atual !== 'Disponível' && eq.estado_atual !== 'Degradado' && eq.estado_atual !== 'Ocupado' && (() => {
             const bloqueios = {
-              'Avariado':       { cor: 'var(--red)',   msg: '⚠ Equipamento interdito por avaria' },
-              'Em manutenção':  { cor: 'var(--amber)',  msg: '⚙ Equipamento em manutenção' },
-              'Em calibração':  { cor: 'var(--amber)',  msg: '◎ Equipamento em calibração' },
+              'Avariado':       { cor: 'var(--red)',   msg: t('detalhe.equipBloqAvaria') },
+              'Em manutenção':  { cor: 'var(--amber)',  msg: t('detalhe.equipBloqManutencao') },
+              'Em calibração':  { cor: 'var(--amber)',  msg: t('detalhe.equipBloqCalibracao') },
             }
             const info = bloqueios[eq.estado_atual]
             if (!info) return null
@@ -475,16 +688,29 @@ export default function DetalheEquipamento() {
                   background: '#dc2626',
                   color: '#fff',
                   border: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
                 }}
               >
-                Forçar Término
+                <LogOut size={16} />
+                {t('detalhe.finalizarCheckin')}
               </button>
 
               <button
                 className={styles.btnAmber}
                 onClick={handleEditarSessao}
               >
-                Ajustar Duração
+                {t('detalhe.ajustarDuracao')}
+              </button>
+
+              <button
+                className={styles.btnSecondary}
+                onClick={handleObterRelatorio}
+                title={t('detalhe.obterRelatorioTooltip')}
+                disabled
+              >
+                {t('detalhe.obterRelatorio')}
               </button>
             </>
           )}
@@ -492,14 +718,14 @@ export default function DetalheEquipamento() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: '1 1 auto' }}>
             {sessaoAtiva && (
               <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                ✓ Check-in iniciado a {formatarDataHora(sessaoAtiva.inicio)}
+                {t('detalhe.sessaoIniciada', { hora: formatarDataHora(sessaoAtiva.inicio, t) })}
               </div>
             )}
             {reservaAtiva?.fim_automatico && (
               <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-                Termina previsto: {fmt(reservaAtiva.fim_automatico)}
+                {t('detalhe.terminaPrevisto')} {fmt(reservaAtiva.fim_automatico, locale)}
                 {' · '}
-                {formatTempoRestante(reservaAtiva.fim_automatico)}
+                {formatTempoRestante(reservaAtiva.fim_automatico, t)}
               </div>
             )}
           </div>
@@ -507,14 +733,14 @@ export default function DetalheEquipamento() {
       </div>
 
       <div className={styles.section}>
-        <div className="label">Ações</div>
+        <div className="label">{t('common.actions')}</div>
 
         <div className={styles.acoes}>
           <button
             className={styles.btnGreen}
             onClick={() => setModalEstado(true)}
           >
-            Atualizar Estado
+            {t('detalhe.acoesAtualizarEstado')}
           </button>
 
           <button
@@ -524,7 +750,15 @@ export default function DetalheEquipamento() {
               setModalAvaria(true)
             }}
           >
-            {avariasAbertas > 0 ? 'Ver Detalhes da Avaria' : 'Registar Avaria'}
+            {avariasAbertas > 0 ? t('detalhe.acoesVerAvaria') : t('detalhe.acoesRegistarAvaria')}
+          </button>
+
+          <button
+            className={styles.btnSecondary}
+            onClick={handleExportarPDF}
+            disabled={exportandoPDF}
+          >
+            {exportandoPDF ? t('detalhe.aGerarPDF') : t('detalhe.exportarPDF')}
           </button>
         </div>
       </div>
@@ -537,36 +771,38 @@ export default function DetalheEquipamento() {
             active={tab === 'avarias'}
             onClick={() => setTab('avarias')}
           >
-            Avarias ({avariasAbertas})
+            {t('avarias.title')} ({avariasAbertas})
           </TabBtn>
 
           <TabBtn
             active={tab === 'manutencoes'}
             onClick={() => setTab('manutencoes')}
           >
-            Manutenções ({manutencoes.length})
+            {t('manutencoes.title')} ({manutencoes.length})
           </TabBtn>
 
           <TabBtn
             active={tab === 'calibracoes'}
             onClick={() => setTab('calibracoes')}
           >
-            Calibrações ({calibracoes.length})
+            {t('calibracoes.title')} ({calibracoes.length})
           </TabBtn>
         </div>
 
         {tab === 'avarias' && (
-          <TabelaAvarias avarias={avarias} />
+          <TabelaAvarias avarias={avarias} locale={locale} t={t} />
         )}
 
         {tab === 'manutencoes' && (
-          <TabelaManutencoes manutencoes={manutencoes} />
+          <TabelaManutencoes manutencoes={manutencoes} locale={locale} t={t} />
         )}
 
         {tab === 'calibracoes' && (
-          <TabelaCalibracoes calibracoes={calibracoes} />
+          <TabelaCalibracoes calibracoes={calibracoes} locale={locale} t={t} />
         )}
       </div>
+
+      <SecaoHistoricoFinanceiro equipamentoId={id} t={t} locale={locale} />
 
       {modalEstado && (
         <div
@@ -577,7 +813,7 @@ export default function DetalheEquipamento() {
             className={styles.modal}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2>Atualizar Estado</h2>
+            <h2>{t('detalhe.acoesAtualizarEstado')}</h2>
 
             <div className={styles.stateOptions}>
               {ESTADOS.map((estado) => (
@@ -587,7 +823,7 @@ export default function DetalheEquipamento() {
                     checked={novoEstado === estado}
                     onChange={() => setNovoEstado(estado)}
                   />
-                  {estado}
+                  {estado === 'Degradado' ? t('status.degradado') : estado}
                 </label>
               ))}
             </div>
@@ -597,7 +833,7 @@ export default function DetalheEquipamento() {
                 className={styles.btnSecondary}
                 onClick={() => setModalEstado(false)}
               >
-                Cancelar
+                {t('common.cancel')}
               </button>
 
               <button
@@ -605,7 +841,7 @@ export default function DetalheEquipamento() {
                 onClick={handleEstado}
                 disabled={savingEstado}
               >
-                {savingEstado ? 'A guardar...' : 'Confirmar'}
+                {savingEstado ? t('detalhe.aGuardar') : t('common.confirm')}
               </button>
             </div>
           </div>
@@ -621,7 +857,7 @@ export default function DetalheEquipamento() {
             className={styles.modal}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2>Registar Avaria</h2>
+            <h2>{t('detalhe.acoesRegistarAvaria')}</h2>
 
             {msgAvaria ? (
               <div className={styles.sucesso}>{msgAvaria}</div>
@@ -629,18 +865,18 @@ export default function DetalheEquipamento() {
               <div className={styles.avariaGrid}>
                 <div className={styles.field}>
                   <span className={styles.fieldLabel}>
-                    <span className={styles.fieldTag}>Equipamento</span>
+                    <span className={styles.fieldTag}>{t('detalhe.campoEquipamento')}</span>
                   </span>
                   <div className={styles.readonlyField}>
                     <strong>{eq?.codigo || '—'}</strong>
-                    <span>{eq?.nome || 'Equipamento em carregamento'}</span>
+                    <span>{eq?.nome || t('detalhe.equipEmCarregamento')}</span>
                   </div>
                 </div>
 
                 <label className={styles.switchField}>
                   <span className={styles.switchText}>
                     <FontAwesomeIcon icon={faBuilding} className={styles.fieldIcon} aria-hidden="true" />
-                    Empresa Externa
+                    {t('detalhe.campoEmpresaExterna')}
                   </span>
                   <span className={styles.switchControl}>
                     <input
@@ -657,7 +893,7 @@ export default function DetalheEquipamento() {
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>
                     <FontAwesomeIcon icon={faCalendarDays} className={styles.fieldIcon} aria-hidden="true" />
-                    Data de Registo
+                    {t('detalhe.campoDataRegisto')}
                   </span>
                   <input
                     className={styles.input}
@@ -669,8 +905,8 @@ export default function DetalheEquipamento() {
 
                 <label className={styles.switchField}>
                   <span className={styles.switchText}>
-                    <span className={styles.fieldTag}>Paragem</span>
-                    Paragem de Equipamento
+                    <span className={styles.fieldTag}>{t('detalhe.campoParagem')}</span>
+                    {t('detalhe.campoParagemEquip')}
                   </span>
                   <span className={styles.switchControl}>
                     <input
@@ -687,12 +923,12 @@ export default function DetalheEquipamento() {
                 <label className={`${styles.field} ${styles.fieldFull}`}>
                   <span className={styles.fieldLabel}>
                     <FontAwesomeIcon icon={faExclamationTriangle} className={styles.fieldIcon} aria-hidden="true" />
-                    Descrição do Problema
+                    {t('detalhe.campoDescricaoProblema')}
                   </span>
                   <textarea
                     rows={4}
                     className={styles.textarea}
-                    placeholder="Descreve o problema com o máximo de detalhe possível..."
+                    placeholder={t('detalhe.placeholderDescricao')}
                     value={descAvaria}
                     onChange={(e) =>
                       setDescAvaria(e.target.value)
@@ -703,7 +939,7 @@ export default function DetalheEquipamento() {
 
                 <input
                   className={styles.input}
-                  placeholder="Nº relatório"
+                  placeholder={t('detalhe.placeholderRelatorio')}
                   value={numRelatorio}
                   onChange={(e) =>
                     setNumRelatorio(e.target.value)
@@ -713,7 +949,7 @@ export default function DetalheEquipamento() {
                 <input
                   className={styles.input}
                   type="number"
-                  placeholder="Custo"
+                  placeholder={t('detalhe.placeholderCusto')}
                   value={custoAvaria}
                   onChange={(e) =>
                     setCustoAvaria(e.target.value)
@@ -722,7 +958,7 @@ export default function DetalheEquipamento() {
 
                 <input
                   className={styles.input}
-                  placeholder="SC / PO"
+                  placeholder={t('detalhe.placeholderScPo')}
                   value={scPoAvaria}
                   onChange={(e) =>
                     setScPoAvaria(e.target.value)
@@ -739,7 +975,7 @@ export default function DetalheEquipamento() {
                   resetAvaria()
                 }}
               >
-                Cancelar
+                {t('common.cancel')}
               </button>
 
               {!msgAvaria && (
@@ -751,10 +987,80 @@ export default function DetalheEquipamento() {
                   }
                 >
                   {savingAvaria
-                    ? 'A registar...'
-                    : 'Registar'}
+                    ? t('detalhe.aRegistar')
+                    : t('detalhe.registar')}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalConfirmacaoCalib && (
+        <div
+          className={styles.overlay}
+          onClick={() => setModalConfirmacaoCalib(false)}
+        >
+          <div
+            className={styles.modal}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{
+              background: calibExpirada
+                ? 'color-mix(in srgb, #dc2626 12%, transparent)'
+                : 'color-mix(in srgb, #f59e0b 12%, transparent)',
+              border: `1px solid ${calibExpirada ? '#dc2626' : '#f59e0b'}`,
+              borderRadius: 'var(--radius)',
+              padding: '14px 16px',
+              marginBottom: 20,
+            }}>
+              <div style={{
+                fontWeight: 700,
+                fontSize: 15,
+                marginBottom: 8,
+                color: calibExpirada ? '#dc2626' : '#b45309',
+              }}>
+                {t('detalhe.calibAtencaoTitulo', { estado: calibExpirada ? t('detalhe.calibExpirada') : t('detalhe.calibProximaFim') })}
+              </div>
+              <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55 }}>
+                {calibExpirada
+                  ? t('detalhe.calibExpirouHaDias', { n: Math.abs(diasParaCalib), sufixo: Math.abs(diasParaCalib) !== 1 ? t('detalhe.diasPlural') : t('detalhe.diaSingular') })
+                  : t('detalhe.calibExpiraEm', { n: diasParaCalib, sufixo: diasParaCalib !== 1 ? t('detalhe.diasPlural') : t('detalhe.diaSingular') })
+                }
+              </p>
+              <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
+                {t('detalhe.calibConfirmacao')}
+              </p>
+            </div>
+
+            <div className={styles.modalActions}>
+              <button
+                style={{
+                  padding: '8px 16px',
+                  border: '1px solid var(--text-dim)',
+                  background: 'transparent',
+                  color: 'var(--text-secondary)',
+                  borderRadius: 'var(--radius)',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                }}
+                onClick={() => {
+                  calibExcecaoRef.current = true
+                  setModalConfirmacaoCalib(false)
+                  setModalDuracao(true)
+                }}
+              >
+                {t('detalhe.calibSimIniciar')}
+              </button>
+              <button
+                className={styles.btnGreen}
+                onClick={() => {
+                  setModalConfirmacaoCalib(false)
+                  setTab('calibracoes')
+                }}
+              >
+                {t('detalhe.calibCancelarVerificar')}
+              </button>
             </div>
           </div>
         </div>
@@ -781,11 +1087,10 @@ export default function DetalheEquipamento() {
             className={styles.modal}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className={styles.modalTitle}>Forçar Término</h2>
+            <h2 className={styles.modalTitle}>{t('detalhe.finalizarSessaoTitulo')}</h2>
 
             <p className={styles.modalDesc}>
-              A sessão de utilização será encerrada imediatamente e o equipamento
-              ficará disponível. Esta ação não pode ser revertida.
+              {t('detalhe.finalizarSessaoDesc')}
             </p>
 
             <div className={styles.modalActions}>
@@ -794,7 +1099,7 @@ export default function DetalheEquipamento() {
                 onClick={() => setModalTermino(false)}
                 disabled={savingTermino}
               >
-                Cancelar
+                {t('common.cancel')}
               </button>
 
               <button
@@ -803,7 +1108,7 @@ export default function DetalheEquipamento() {
                 disabled={savingTermino}
                 style={{ background: '#dc2626', color: '#fff', border: 'none' }}
               >
-                {savingTermino ? 'A encerrar...' : 'Confirmar Término'}
+                {savingTermino ? t('detalhe.aEncerrar') : t('detalhe.confirmarFinalizacao')}
               </button>
             </div>
           </div>
@@ -815,6 +1120,89 @@ export default function DetalheEquipamento() {
         open={showHistoryDrawer}
         onClose={() => setShowHistoryDrawer(false)}
       />
+    </div>
+  )
+}
+
+const CUSTO_AVISO_EUR = 5000
+
+function SecaoHistoricoFinanceiro({ equipamentoId, t, locale }) {
+  const anoAtual = new Date().getFullYear()
+  const [dados, setDados] = useState(null)
+
+  useEffect(() => {
+    const token = localStorage.getItem('lab_auth_token')
+    fetch(`/api/financeiro/resumo?ano=${anoAtual}&equipamento_id=${equipamentoId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => { if (!r.ok) throw new Error(); return r.json() })
+      .then(setDados)
+      .catch(() => {})
+  }, [equipamentoId])
+
+  if (!dados) return null
+
+  const fmtEur = (v) =>
+    new Intl.NumberFormat(locale, { style: 'currency', currency: 'EUR' }).format(v ?? 0)
+
+  const total = dados.total_eur ?? 0
+  const avarias = dados.avarias_eur ?? 0
+  const manutencoes = dados.manutencoes_eur ?? 0
+  const calibracoes = dados.calibracoes_eur ?? 0
+
+  return (
+    <div className={styles.section}>
+      <div className="label">Histórico Financeiro ({anoAtual})</div>
+
+      {total === 0 ? (
+        <div style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 6 }}>
+          {t('financeiro.semDados').replace('este período', String(anoAtual))}
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 10, marginBottom: 14 }}>
+            {[
+              { label: t('financeiro.custoAvarias'), value: avarias },
+              { label: t('financeiro.custoManutencoes'), value: manutencoes },
+              { label: t('financeiro.custoCalibrações'), value: calibracoes },
+              { label: t('financeiro.custoTotal'), value: total },
+            ].map(({ label, value }) => (
+              <div
+                key={label}
+                style={{
+                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  borderRadius: 6, padding: '8px 12px', minWidth: 120,
+                }}
+              >
+                <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 2 }}>{label}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{fmtEur(value)}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 10 }}>
+            {avarias > 0 && (
+              <div style={{ width: `${(avarias / total) * 100}%`, backgroundColor: '#dc2626' }} />
+            )}
+            {manutencoes > 0 && (
+              <div style={{ width: `${(manutencoes / total) * 100}%`, backgroundColor: '#f59e0b' }} />
+            )}
+            {calibracoes > 0 && (
+              <div style={{ width: `${(calibracoes / total) * 100}%`, backgroundColor: '#3b82f6' }} />
+            )}
+          </div>
+
+          {total >= CUSTO_AVISO_EUR && (
+            <div style={{
+              fontSize: 12, color: '#b45309',
+              background: 'color-mix(in srgb, #f59e0b 10%, transparent)',
+              border: '1px solid #f59e0b', borderRadius: 4, padding: '6px 10px',
+            }}>
+              ⚠ Custo acumulado elevado. Considerar análise de substituição.
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -841,14 +1229,134 @@ function TabBtn({ children, active, onClick }) {
   )
 }
 
-function TabelaAvarias({ avarias }) {
-  return <div>Avarias: {avarias.length}</div>
+function TabelaAvarias({ avarias, locale, t }) {
+  if (avarias.length === 0) {
+    return <div className={styles.sucesso}>{t('avarias.noOpen')}</div>
+  }
+  return (
+    <table className={styles.table}>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>{t('common.description')}</th>
+          <th>{t('common.status')}</th>
+          <th>{t('avarias.reportedAt')}</th>
+          <th>{t('avarias.resolvedAt')}</th>
+          <th>{t('avarias_page.custo')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {avarias.map((av, i) => (
+          <tr
+            key={av.id}
+            style={!av.resolvida ? { background: 'color-mix(in srgb, var(--red) 5%, transparent)' } : undefined}
+          >
+            <td>{i + 1}</td>
+            <td>{av.descricao}</td>
+            <td>
+              <StatusBadge variant={av.resolvida ? 'success' : 'danger'}>
+                {av.resolvida ? t('avarias.resolved') : t('avarias.open')}
+              </StatusBadge>
+            </td>
+            <td>{fmt(av.data_registo, locale)}</td>
+            <td>{fmt(av.data_resolucao, locale)}</td>
+            <td>{av.custo_reparacao != null ? `${Number(av.custo_reparacao).toFixed(2)}€` : '—'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
 }
 
-function TabelaManutencoes({ manutencoes }) {
-  return <div>Manutenções: {manutencoes.length}</div>
+function TabelaManutencoes({ manutencoes, locale, t }) {
+  if (manutencoes.length === 0) {
+    return <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>{t('common.noData')}</div>
+  }
+  const hoje = new Date()
+  hoje.setHours(0, 0, 0, 0)
+  return (
+    <table className={styles.table}>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>{t('common.description')}</th>
+          <th>{t('common.type')}</th>
+          <th>{t('manutencoes.performed')}</th>
+          <th>{t('manutencoes.next')}</th>
+          <th>{t('manutencoes_page.custo')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {manutencoes.map((mn, i) => {
+          let proximaCor = 'inherit'
+          if (mn.proxima_data) {
+            const proxima = new Date(mn.proxima_data)
+            proxima.setHours(0, 0, 0, 0)
+            const dias = Math.ceil((proxima - hoje) / 86400000)
+            proximaCor = dias < 0 ? '#dc2626' : dias <= 30 ? '#f59e0b' : '#10b981'
+          }
+          return (
+            <tr key={mn.id}>
+              <td>{i + 1}</td>
+              <td>{mn.descricao}</td>
+              <td>{mn.tipo_intervencao ?? '—'}</td>
+              <td>{fmt(mn.data_realizada, locale)}</td>
+              <td style={{ color: proximaCor, fontWeight: mn.proxima_data ? 500 : 'inherit' }}>
+                {fmt(mn.proxima_data, locale)}
+              </td>
+              <td>{mn.custo_eur != null ? `${Number(mn.custo_eur).toFixed(2)} €` : '—'}</td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
 }
 
-function TabelaCalibracoes({ calibracoes }) {
-  return <div>Calibrações: {calibracoes.length}</div>
+function TabelaCalibracoes({ calibracoes, locale, t }) {
+  if (calibracoes.length === 0) {
+    return <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>{t('common.noData')}</div>
+  }
+  const hoje = new Date()
+  hoje.setHours(0, 0, 0, 0)
+  return (
+    <table className={styles.table}>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>{t('calibracoes.calibratedAt')}</th>
+          <th>{t('calibracoes.nextCalibration')}</th>
+          <th>{t('calibracoes_page.diasRestantes')}</th>
+          <th>{t('calibracoes.certificate')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {calibracoes.map((cal, i) => {
+          let diasRestantes = null
+          let corDias = 'inherit'
+          if (cal.proxima_data) {
+            const proxima = new Date(cal.proxima_data)
+            proxima.setHours(0, 0, 0, 0)
+            diasRestantes = Math.ceil((proxima - hoje) / 86400000)
+            corDias = diasRestantes < 0 ? '#dc2626' : diasRestantes <= 30 ? '#f59e0b' : '#10b981'
+          }
+          return (
+            <tr key={cal.id}>
+              <td>{i + 1}</td>
+              <td>{fmt(cal.data_realizada, locale)}</td>
+              <td>{fmt(cal.proxima_data, locale)}</td>
+              <td style={{ color: corDias, fontWeight: diasRestantes !== null ? 600 : 'inherit' }}>
+                {diasRestantes !== null ? diasRestantes : '—'}
+              </td>
+              <td>
+                {cal.certificado_url
+                  ? <a href={cal.certificado_url} target="_blank" rel="noreferrer" style={{ color: 'var(--amber)' }}>Ver →</a>
+                  : '—'}
+              </td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
 }

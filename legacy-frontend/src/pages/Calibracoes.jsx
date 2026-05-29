@@ -4,19 +4,15 @@ import { Link } from 'react-router-dom'
 import { api } from '../api/index.js'
 import EmptyState from '../components/EmptyState.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
+import { useLanguage } from '../contexts/useLanguage.js'
 import styles from './Calibracoes.module.css'
 import { useEquipamentos } from '../hooks/useEquipamentos.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 import ResourceTable from '../components/ResourceTable.jsx'
 
-/**
- * Página: Calibrações
- * Lista calibrações, filtra por urgência e permite registar uma nova calibração.
- * Refactor: usa `useEquipamentos`, `ResourceTable` e memoização para reduzir re-renders.
- */
-function fmt(dt) {
+function fmt(dt, locale = 'pt-PT') {
   if (!dt) return '—'
-  return new Date(dt).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', year: 'numeric' })
+  return new Date(dt).toLocaleDateString(locale, { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
 function diasRestantes(dt) {
@@ -28,6 +24,8 @@ const EMPTY = { data_realizada: '', proxima_data: '', certificado_url: '' }
 
 export default function Calibracoes() {
   const toast = useToast()
+  const { t, lang } = useLanguage()
+  const locale = lang === 'pt' ? 'pt-PT' : 'en-GB'
   const { map: equipamentos, list: equipamentosList, loading: eqLoading, reload: reloadEquipamentos } = useEquipamentos()
 
   const [calibracoes, setCalibracoes] = useState([])
@@ -38,6 +36,13 @@ export default function Calibracoes() {
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
   const [formErro, setFormErro] = useState('')
+  const [formFornecedor, setFormFornecedor] = useState('')
+  const [formCusto, setFormCusto] = useState('')
+
+  const fornecedoresExistentes = useMemo(
+    () => [...new Set(calibracoes.map((c) => c.fornecedor).filter(Boolean))],
+    [calibracoes],
+  )
   const [pesquisa, setPesquisa] = useState('')
   const [filtroUrgencia, setFiltroUrgencia] = useState('todas')
 
@@ -52,11 +57,11 @@ export default function Calibracoes() {
       setProximas(prox)
       if (equipamentosList.length > 0 && !eqSel) setEqSel(String(equipamentosList[0].id))
     } catch (e) {
-      toast.error(`Falha ao carregar calibrações: ${e.message}`)
+      toast.error(`${t('calibracoes.errorLoad')}: ${e.message}`)
     } finally {
       setLoading(false)
     }
-  }, [equipamentosList, eqSel, toast])
+  }, [equipamentosList, eqSel, toast, t])
 
   useEffect(() => { carregar() }, [carregar])
 
@@ -113,63 +118,16 @@ export default function Calibracoes() {
       link.click()
       document.body.removeChild(link)
       URL.revokeObjectURL(url)
-      toast.success('PDF exportado com sucesso.')
+      toast.success(t('calibracoes_page.pdfExportado'))
     } catch (e) {
-      toast.error(`Falha ao exportar: ${e.message}`)
+      toast.error(t('calibracoes_page.erroPdf', { msg: e.message }))
     }
   }, [pesquisa, filtroUrgencia, toast])
 
-  const handleExport = useCallback(() => {
-    if (!calibracoesFiltradas || calibracoesFiltradas.length === 0) return
-
-    const filename = `calibracoes-${new Date().toISOString().slice(0, 10)}.csv`
-    const rows = calibracoesFiltradas.map(cal => {
-      const eq = equipamentos[cal.equipamento_id]
-      const dias = diasRestantes(cal.proxima_data)
-      const vencida = dias !== null && dias < 0
-      const urgente = dias !== null && dias >= 0 && dias <= 30
-      const ok = dias !== null && dias > 30
-
-      const estado =
-        dias === null
-          ? 'Sem data'
-          : vencida
-            ? `Vencida há ${Math.abs(dias)}d`
-            : urgente
-              ? `A vencer em ${dias}d`
-              : ok
-                ? `Em dia (${dias}d)`
-                : 'Sem data'
-
-      return {
-        id: String(cal.id).padStart(3, '0'),
-        equipamento: eq?.nome || `EQ-${cal.equipamento_id}`,
-        data_realizada: fmtCsv(cal.data_realizada),
-        proxima_data: fmtCsv(cal.proxima_data),
-        estado,
-        certificado_url: cal.certificado_url || '',
-      }
-    })
-
-    downloadCsv({
-      filename,
-      rows,
-      delimiter: ';',
-      columns: [
-        { key: 'id', header: '#' },
-        { key: 'equipamento', header: 'Equipamento' },
-        { key: 'data_realizada', header: 'Data Realizada' },
-        { key: 'proxima_data', header: 'Próxima Calibração' },
-        { key: 'estado', header: 'Estado' },
-        { key: 'certificado_url', header: 'Certificado' },
-      ],
-    })
-  }, [calibracoesFiltradas, equipamentos, fmtCsv])
-
   const handleSubmit = useCallback(async () => {
     if (!eqSel || !form.data_realizada) {
-      setFormErro('Preenche os campos obrigatórios.')
-      toast.error('Faltam campos obrigatórios na calibração.')
+      setFormErro(t('calibracoes_page.erroCamposObrigatorios'))
+      toast.error(t('calibracoes_page.erroCamposObrigatoriosToast'))
       return
     }
     setSaving(true)
@@ -179,20 +137,24 @@ export default function Calibracoes() {
         data_realizada: new Date(form.data_realizada).toISOString(),
         proxima_data: form.proxima_data ? new Date(form.proxima_data).toISOString() : null,
         certificado_url: form.certificado_url || null,
+        fornecedor: formFornecedor || null,
+        custo_eur: formCusto ? parseFloat(formCusto) : null,
       }
       await api.registarCalibracao(eqSel, payload)
-      toast.success('Calibração registada com sucesso.')
+      toast.success(t('calibracoes.successCreate'))
       setModal(false)
       setForm(EMPTY)
+      setFormFornecedor('')
+      setFormCusto('')
       carregar()
       reloadEquipamentos()
     } catch (e) {
       setFormErro(e.message)
-      toast.error(e.message || 'Não foi possível registar calibração.')
+      toast.error(e.message || t('calibracoes_page.erroRegistar'))
     } finally {
       setSaving(false)
     }
-  }, [eqSel, form, carregar, reloadEquipamentos, toast])
+  }, [eqSel, form, formFornecedor, formCusto, carregar, reloadEquipamentos, toast, t])
 
   const loadingPage = loading || eqLoading
 
@@ -211,16 +173,16 @@ export default function Calibracoes() {
             : `EQ-${cal.equipamento_id}`
           }
         </td>
-        <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(cal.data_realizada)}</td>
-        <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(cal.proxima_data)}</td>
+        <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(cal.data_realizada, locale)}</td>
+        <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(cal.proxima_data, locale)}</td>
         <td>
           {dias !== null ? (
             <StatusBadge variant={vencida ? 'danger' : urgente ? 'occupied' : 'success'}>
               {vencida
-                ? `Vencida há ${Math.abs(dias)}d`
+                ? t('calibracoes_page.overdueHa', { dias: Math.abs(dias) })
                 : urgente
-                  ? `A vencer em ${dias}d`
-                  : `Em dia (${dias}d)`}
+                  ? t('calibracoes_page.aVencerEm', { dias })
+                  : t('calibracoes_page.emDiaDias', { dias })}
             </StatusBadge>
           ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
         </td>
@@ -232,27 +194,26 @@ export default function Calibracoes() {
         </td>
       </tr>
     )
-  }, [equipamentos])
+  }, [equipamentos, locale, t])
 
   return (
     <div className="fade-up">
       <div className={styles.header}>
         <div>
-          <div className="label">Registos</div>
-          <h1 className={styles.title}>Calibrações</h1>
+          <div className="label">{t('calibracoes_page.subtitulo')}</div>
+          <h1 className={styles.title}>{t('calibracoes.title')}</h1>
         </div>
         <button type="button" className={styles.registerBtn} onClick={() => setModal(true)}>
           <Plus size={18} strokeWidth={2.5} />
-          Registar Calibração
+          {t('calibracoes.new')}
         </button>
       </div>
 
-      {/* Alerta: calibrações a vencer */}
       {proximas.length > 0 && (
         <div className={styles.alerta}>
           <span className={styles.alertaIcon}>◎</span>
           <div>
-            <strong>{proximas.length} calibração(ões)</strong> a vencer nos próximos 30 dias.
+            <strong>{t('calibracoes_page.alertaBannerCount', { count: proximas.length })}</strong>{t('calibracoes_page.alertaBannerSufixo')}
             {proximas.map(c => {
               const eq = equipamentos[c.equipamento_id]
               const dias = diasRestantes(c.proxima_data)
@@ -260,7 +221,7 @@ export default function Calibracoes() {
                 <span key={c.id} className={styles.alertaItem}>
                   {eq && <Link to={`/equipamentos/${eq.id}`} className={styles.eqLink}>{eq.nome}</Link>}
                   <span className="mono" style={{ fontSize: 11 }}>
-                    {dias <= 0 ? ' — VENCIDA' : ` — ${dias}d`}
+                    {dias <= 0 ? ` — ${t('calibracoes_page.vencida')}` : ` — ${dias}d`}
                   </span>
                 </span>
               )
@@ -272,7 +233,7 @@ export default function Calibracoes() {
       <div className={styles.filters}>
         <input
           className={styles.search}
-          placeholder="Pesquisar por equipamento ou certificado…"
+          placeholder={t('common.search')}
           value={pesquisa}
           onChange={(e) => setPesquisa(e.target.value)}
         />
@@ -281,10 +242,10 @@ export default function Calibracoes() {
           value={filtroUrgencia}
           onChange={(e) => setFiltroUrgencia(e.target.value)}
         >
-          <option value="todas">Todas as urgências</option>
-          <option value="vencidas">Vencidas</option>
-          <option value="urgentes">A vencer (&lt;=30d)</option>
-          <option value="ok">Em dia (&gt;30d)</option>
+          <option value="todas">{t('calibracoes_page.todasUrgencias')}</option>
+          <option value="vencidas">{t('calibracoes_page.vencidas')}</option>
+          <option value="urgentes">{t('calibracoes_page.aVencer30')}</option>
+          <option value="ok">{t('calibracoes_page.emDia')}</option>
         </select>
         <button
           type="button"
@@ -293,15 +254,15 @@ export default function Calibracoes() {
           onClick={handleExportPdf}
         >
           <Download size={14} strokeWidth={2} />
-          Exportar PDF
+          {t('calibracoes_page.exportarPdf')}
         </button>
       </div>
 
-      {loadingPage && <div className={styles.empty}>A carregar…</div>}
+      {loadingPage && <div className={styles.empty}>{t('common.loading')}</div>}
 
       {!loadingPage && (
         <ResourceTable
-          columns={[ '#', 'Equipamento', 'Data Realizada', 'Próxima Calibração', 'Dias Restantes', 'Certificado' ]}
+          columns={[ '#', t('common.equipment'), t('calibracoes.calibratedAt'), t('calibracoes.nextCalibration'), t('calibracoes_page.diasRestantes'), t('calibracoes.certificate') ]}
           items={calibracoesFiltradas}
           renderRow={renderRow}
           loading={false}
@@ -311,15 +272,15 @@ export default function Calibracoes() {
               icon="◎"
               title={
                 calibracoes.length === 0
-                  ? 'Ainda não existem calibrações registadas.'
-                  : 'Sem resultados para os filtros atuais.'
+                  ? t('calibracoes_page.semCalibracoes')
+                  : t('calibracoes_page.semResultados')
               }
               subtitle={
                 calibracoes.length === 0
-                  ? 'Comece por registar a primeira calibração.'
-                  : 'Tente outro termo ou mude a urgência.'
+                  ? t('calibracoes_page.semCalibracoesSub')
+                  : t('calibracoes_page.semResultadosSub')
               }
-              buttonText={calibracoes.length === 0 ? '+ Registar Calibração' : 'Limpar filtros'}
+              buttonText={calibracoes.length === 0 ? `+ ${t('calibracoes.new')}` : t('calibracoes_page.limparFiltros')}
               onButtonClick={() => {
                 if (calibracoes.length === 0) setModal(true)
                 else {
@@ -334,16 +295,15 @@ export default function Calibracoes() {
         />
       )}
 
-      {/* Modal */}
       {modal && (
         <div className={styles.overlay} onClick={() => setModal(false)}>
           <div className={styles.modal} onClick={e => e.stopPropagation()}>
-            <div className="label" style={{ marginBottom: 6 }}>Calibração</div>
-            <h2 className={styles.modalTitle}>Registar Calibração</h2>
+            <div className="label" style={{ marginBottom: 6 }}>{t('calibracoes.title')}</div>
+            <h2 className={styles.modalTitle}>{t('calibracoes.new')}</h2>
 
             <div className={styles.fields}>
               <label className={styles.field}>
-                <span className="label">Equipamento *</span>
+                <span className="label">{t('common.equipment')} *</span>
                 <select className={styles.input} value={eqSel} onChange={e => setEqSel(e.target.value)}>
                   {Object.values(equipamentos).map(eq => (
                     <option key={eq.id} value={eq.id}>{eq.nome}</option>
@@ -351,29 +311,55 @@ export default function Calibracoes() {
                 </select>
               </label>
               <label className={styles.field}>
-                <span className="label">Data Realizada *</span>
+                <span className="label">{t('calibracoes.calibratedAt')} *</span>
                 <input type="datetime-local" className={styles.input} value={form.data_realizada}
                   onChange={e => setForm(f => ({ ...f, data_realizada: e.target.value }))} />
               </label>
               <label className={styles.field}>
-                <span className="label">Próxima Calibração (opcional)</span>
+                <span className="label">{t('calibracoes.nextCalibration')} (opcional)</span>
                 <input type="datetime-local" className={styles.input} value={form.proxima_data}
                   onChange={e => setForm(f => ({ ...f, proxima_data: e.target.value }))} />
               </label>
               <label className={styles.field}>
-                <span className="label">URL do Certificado (opcional)</span>
+                <span className="label">{t('calibracoes_page.urlCertificado')}</span>
                 <input type="url" className={styles.input} value={form.certificado_url}
                   onChange={e => setForm(f => ({ ...f, certificado_url: e.target.value }))}
                   placeholder="https://..." />
+              </label>
+              <label className={styles.field}>
+                <span className="label">{t('calibracoes_page.fornecedor')}</span>
+                <input
+                  type="text"
+                  className={styles.input}
+                  value={formFornecedor}
+                  onChange={(e) => setFormFornecedor(e.target.value)}
+                  placeholder={t('calibracoes_page.fornecedorPlaceholder')}
+                  list="cal-fornecedores-list"
+                />
+                <datalist id="cal-fornecedores-list">
+                  {fornecedoresExistentes.map((f) => <option key={f} value={f} />)}
+                </datalist>
+              </label>
+              <label className={styles.field}>
+                <span className="label">{t('calibracoes_page.custo')}</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className={styles.input}
+                  value={formCusto}
+                  onChange={(e) => setFormCusto(e.target.value)}
+                  placeholder={t('calibracoes_page.custoPlaceholder')}
+                />
               </label>
             </div>
 
             {formErro && <div className={styles.formErro}>{formErro}</div>}
 
             <div className={styles.modalActions}>
-              <button className={styles.btnSecondary} onClick={() => { setModal(false); setFormErro('') }}>Cancelar</button>
+              <button className={styles.btnSecondary} onClick={() => { setModal(false); setFormErro('') }}>{t('common.cancel')}</button>
               <button className={styles.btnPrimary} onClick={handleSubmit} disabled={saving}>
-                {saving ? 'A guardar…' : 'Registar'}
+                {saving ? t('common.loading') : t('common.save')}
               </button>
             </div>
           </div>

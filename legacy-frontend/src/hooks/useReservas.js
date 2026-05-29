@@ -30,6 +30,8 @@ export function useReservas(userRole) {
         const iniciais = r.utilizador_iniciais || (r.utilizador_nome ? r.utilizador_nome.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase() : '')
         const corBase = corDoUtilizador(r.utilizador_id)
 
+        const resourceId = String(r.equipamento_id)
+
         // Evento A — Planeado: intervalo original da reserva, sempre presente
         evs.push({
           id: `planeado-${r.id}`,
@@ -40,6 +42,7 @@ export function useReservas(userRole) {
           borderColor: corBase,
           textColor: '#fff',
           zIndex: 1,
+          resourceId,
           extendedProps: { ...r, tipo: 'planeado' },
         })
 
@@ -56,6 +59,7 @@ export function useReservas(userRole) {
             borderColor: corBase,
             textColor: '#fff',
             zIndex: 2,
+            resourceId,
             classNames: ['fc-event-real', emCurso ? 'fc-event-real--curso' : 'fc-event-real--concluido'],
             extendedProps: { ...r, tipo: 'real', emCurso },
           })
@@ -76,6 +80,16 @@ export function useReservas(userRole) {
     await load()
   }, [load])
 
+  const updateReserva = useCallback(async (id, payload) => {
+    await api.atualizarReserva(id, payload)
+    await load()
+  }, [load])
+
+  const cancelReserva = useCallback(async (id) => {
+    await api.cancelarReserva(id)
+    await load()
+  }, [load])
+
   const reservasPorDia = useCallback(async (data) => {
     return api.reservasPorDia(data)
   }, [])
@@ -84,5 +98,17 @@ export function useReservas(userRole) {
     return api.exportarReservasPdf()
   }, [])
 
-  return useMemo(() => ({ eventos, reservas, equipamentos, utilizadores, loading, reload: load, createReserva, reservasPorDia, exportPdf }), [eventos, reservas, equipamentos, utilizadores, loading, load, createReserva, reservasPorDia, exportPdf])
+  return useMemo(() => ({
+    eventos,
+    reservas,
+    equipamentos,
+    utilizadores,
+    loading,
+    reload: load,
+    createReserva,
+    updateReserva,
+    cancelReserva,
+    reservasPorDia,
+    exportPdf,
+  }), [eventos, reservas, equipamentos, utilizadores, loading, load, createReserva, updateReserva, cancelReserva, reservasPorDia, exportPdf])
 }

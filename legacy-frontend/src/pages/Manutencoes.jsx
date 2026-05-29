@@ -1,18 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus, Download } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { api } from '../api/index.js'
 import { useToast } from '../components/ToastProvider.jsx'
+import { useLanguage } from '../contexts/useLanguage.js'
 import styles from './Manutencoes.module.css'
 import eqStyles from './Equipamentos.module.css'
 import { useEquipamentos } from '../hooks/useEquipamentos.js'
 import ResourceTable from '../components/ResourceTable.jsx'
 import StatusBadge from '../components/StatusBadge.jsx'
 
-function fmt(dt) {
+function fmt(dt, locale = 'pt-PT') {
   if (!dt) return '—'
-  return new Date(dt).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', year: 'numeric' })
+  return new Date(dt).toLocaleDateString(locale, { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
 function isProxima(dt) {
@@ -28,6 +29,138 @@ function isVencida(dt) {
 
 const TIPOS_INTERVENCAO = ['Diagnóstico', 'Reparação', 'Outro']
 
+function PainelFinanceiroManutencoes({ t, locale }) {
+  const anoAtual = new Date().getFullYear()
+
+  const [dados, setDados] = useState(null)
+  const [loadingPainel, setLoadingPainel] = useState(true)
+  const [expandido, setExpandido] = useState(() => {
+    try { return localStorage.getItem('lab_painel_fin_expandido') !== 'false' }
+    catch { return true }
+  })
+
+  useEffect(() => {
+    api.resumoFinanceiro({ ano: anoAtual })
+      .then(setDados)
+      .catch(() => {})
+      .finally(() => setLoadingPainel(false))
+  }, [])
+
+  const toggleExpandido = () => {
+    setExpandido((prev) => {
+      const next = !prev
+      try { localStorage.setItem('lab_painel_fin_expandido', String(next)) } catch {}
+      return next
+    })
+  }
+
+  const fmtEur = (v) =>
+    new Intl.NumberFormat(locale, { style: 'currency', currency: 'EUR' }).format(v ?? 0)
+
+  if (!loadingPainel && !dados) return null
+
+  if (loadingPainel) {
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            style={{
+              height: 72, background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: 8, opacity: 0.5,
+            }}
+          />
+        ))}
+      </div>
+    )
+  }
+
+  const topEq = [...(dados?.top_equipamentos ?? [])].sort((a, b) => b.total_eur - a.total_eur).slice(0, 3)
+  const maxEq = topEq[0]?.total_eur ?? 1
+  const topForn = [...(dados?.por_fornecedor ?? [])].sort((a, b) => b.total_eur - a.total_eur).slice(0, 4)
+  const vazio = (dados?.total_eur ?? 0) === 0 || (topEq.length === 0 && topForn.length === 0)
+
+  return (
+    <div style={{ marginBottom: 20, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '10px 16px',
+        borderBottom: expandido ? '1px solid var(--border)' : 'none',
+        background: 'var(--surface)',
+      }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+          Resumo Financeiro {anoAtual}
+        </span>
+        <button
+          type="button"
+          onClick={toggleExpandido}
+          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 13, padding: '2px 6px' }}
+        >
+          {expandido ? '▾ recolher' : '▸ Resumo Financeiro'}
+        </button>
+      </div>
+
+      {expandido && (
+        <div style={{ padding: '12px 16px', background: 'var(--bg)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
+            {[
+              { label: t('financeiro.totalGasto'), value: dados?.total_eur },
+              { label: t('financeiro.avariasYtd'), value: dados?.avarias_eur },
+              { label: t('financeiro.manutencoesYtd'), value: dados?.manutencoes_eur },
+              { label: t('financeiro.calibracoesYtd'), value: dados?.calibracoes_eur },
+            ].map(({ label, value }) => (
+              <div key={label} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 14px' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{fmtEur(value)}</div>
+              </div>
+            ))}
+          </div>
+
+          {vazio ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 13, padding: '8px 0' }}>
+              {t('financeiro.semDados')}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                  {t('financeiro.topEquipamentos')}
+                </div>
+                {topEq.map((eq) => (
+                  <div key={eq.id} style={{ marginBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+                      <Link to={`/equipamentos/${eq.id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                        {eq.nome}
+                      </Link>
+                      <span style={{ color: 'var(--text-secondary)' }}>{fmtEur(eq.total_eur)}</span>
+                    </div>
+                    <div style={{ height: 4, background: 'var(--border)', borderRadius: 2 }}>
+                      <div style={{ height: '100%', width: `${Math.round((eq.total_eur / maxEq) * 100)}%`, background: 'var(--accent)', borderRadius: 2 }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                  {t('financeiro.porFornecedor')}
+                </div>
+                {topForn.map((f) => (
+                  <div key={f.nome} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                    <span style={{ color: 'var(--text)' }}>{f.nome}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>
+                      {fmtEur(f.total_eur)} ({f.n_intervencoes} {t('financeiro.nIntervencoes')})
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const EMPTY = {
   descricao: '',
   data_realizada: '',
@@ -40,12 +173,17 @@ const EMPTY = {
 
 export default function Manutencoes() {
   const toast = useToast()
+  const { t, lang } = useLanguage()
+  const locale = lang === 'pt' ? 'pt-PT' : 'en-GB'
+  const tTipo = (tipo) => {
+    const map = { 'Diagnóstico': t('manutencoes_page.tiposDiagnostico'), 'Reparação': t('manutencoes_page.tiposReparacao'), 'Outro': t('manutencoes_page.tiposOutro') }
+    return map[tipo] ?? tipo
+  }
   const { map: equipamentos, list: equipamentosList, loading: eqLoading } = useEquipamentos()
 
   const [manutencoes, setManutencoes] = useState([])
   const [loading, setLoading] = useState(true)
 
-  // Porque (PT-PT): estados para filtros em tempo real
   const [filtro, setFiltro] = useState('')
   const [filtroTipo, setFiltroTipo] = useState('Todos')
 
@@ -54,6 +192,12 @@ export default function Manutencoes() {
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
   const [formErro, setFormErro] = useState('')
+  const [formFornecedor, setFormFornecedor] = useState('')
+
+  const fornecedoresExistentes = useMemo(
+    () => [...new Set(manutencoes.map((m) => m.fornecedor).filter(Boolean))],
+    [manutencoes],
+  )
 
   const carregar = useCallback(async () => {
     setLoading(true)
@@ -61,15 +205,14 @@ export default function Manutencoes() {
       const mn = await api.listarTodasManutencoes()
       setManutencoes(mn)
     } catch (e) {
-      toast.error(`Falha ao carregar manutenções: ${e.message}`)
+      toast.error(`${t('manutencoes.errorLoad')}: ${e.message}`)
     } finally {
       setLoading(false)
     }
-  }, [toast])
+  }, [toast, t])
 
   useEffect(() => { carregar() }, [carregar])
 
-  // Porque (PT-PT): filtragem em tempo real com base no texto e tipo selecionado
   const manutencoesFiltered = manutencoes.filter((mn) => {
     const eq = equipamentos[mn.equipamento_id]
     const nomeEq = eq ? eq.nome : `EQ-${mn.equipamento_id}`
@@ -90,9 +233,9 @@ export default function Manutencoes() {
       link.click()
       document.body.removeChild(link)
       URL.revokeObjectURL(url)
-      toast.success('PDF exportado com sucesso.')
+      toast.success(t('manutencoes_page.pdfExportado'))
     } catch (e) {
-      toast.error(`Falha ao exportar: ${e.message}`)
+      toast.error(t('manutencoes_page.erroPdf', { msg: e.message }))
     }
   }, [filtro, filtroTipo, toast])
 
@@ -100,6 +243,7 @@ export default function Manutencoes() {
     setEqSel(equipamentosList.length > 0 ? String(equipamentosList[0].id) : '')
     setForm(EMPTY)
     setFormErro('')
+    setFormFornecedor('')
     setModal(true)
   }
 
@@ -110,8 +254,8 @@ export default function Manutencoes() {
 
   const handleSubmit = useCallback(async () => {
     if (!eqSel || !form.descricao || !form.data_realizada) {
-      setFormErro('Preenche os campos obrigatórios.')
-      toast.error('Faltam campos obrigatórios na manutenção.')
+      setFormErro(t('manutencoes_page.erroCamposObrigatorios'))
+      toast.error(t('manutencoes_page.erroCamposObrigatoriosToast'))
       return
     }
     setSaving(true)
@@ -125,18 +269,19 @@ export default function Manutencoes() {
         custo_eur: form.custo_eur !== '' && form.custo_eur != null ? Number(form.custo_eur) : null,
         referencia_sc_po: form.referencia_sc_po || null,
         observacoes_externas: form.observacoes_externas || null,
+        fornecedor: formFornecedor || null,
       }
       await api.registarManutencao(eqSel, payload)
-      toast.success('Manutenção registada com sucesso.')
+      toast.success(t('manutencoes.successCreate'))
       closeModal()
       carregar()
     } catch (e) {
       setFormErro(e.message)
-      toast.error(e.message || 'Não foi possível registar manutenção.')
+      toast.error(e.message || t('manutencoes_page.erroRegistar'))
     } finally {
       setSaving(false)
     }
-  }, [eqSel, form, carregar, toast])
+  }, [eqSel, form, carregar, toast, t])
 
   const loadingPage = loading || eqLoading
 
@@ -154,13 +299,13 @@ export default function Manutencoes() {
         </td>
         <td className={styles.descricao}>{mn.descricao}</td>
         <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-          {mn.tipo_intervencao || <span style={{ color: 'var(--text-dim)' }}>—</span>}
+          {mn.tipo_intervencao ? tTipo(mn.tipo_intervencao) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
         </td>
-        <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(mn.data_realizada)}</td>
+        <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmt(mn.data_realizada, locale)}</td>
         <td>
           {mn.proxima_data ? (
             <StatusBadge variant={proxVencida ? 'danger' : proxProxima ? 'occupied' : 'success'}>
-              {proxVencida && '⚠ '}{proxProxima && '● '}{fmt(mn.proxima_data)}
+              {proxVencida && '⚠ '}{proxProxima && '● '}{fmt(mn.proxima_data, locale)}
             </StatusBadge>
           ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
         </td>
@@ -174,26 +319,27 @@ export default function Manutencoes() {
         </td>
       </tr>
     )
-  }, [equipamentos])
+  }, [equipamentos, locale])
 
   return (
     <div className="fade-up">
       <div className={styles.header}>
         <div>
-          <div className="label">Registos</div>
-          <h1 className={styles.title}>Manutenções</h1>
+          <div className="label">{t('manutencoes_page.subtitulo')}</div>
+          <h1 className={styles.title}>{t('manutencoes.title')}</h1>
         </div>
         <button type="button" className={styles.registerBtn} onClick={openModal}>
           <Plus size={18} strokeWidth={2.5} />
-          Registar Manutenção
+          {t('manutencoes.new')}
         </button>
       </div>
 
-      {/* Porque (PT-PT): barra de filtros replicando o padrão de Equipamentos */}
+      <PainelFinanceiroManutencoes t={t} locale={locale} />
+
       <div className={styles.filters}>
         <input
           className={styles.search}
-          placeholder="Pesquisar por equipamento ou descrição…"
+          placeholder={t('common.search')}
           value={filtro}
           onChange={(e) => setFiltro(e.target.value)}
         />
@@ -202,8 +348,8 @@ export default function Manutencoes() {
           value={filtroTipo}
           onChange={(e) => setFiltroTipo(e.target.value)}
         >
-          <option value="Todos">Todos os tipos</option>
-          {TIPOS_INTERVENCAO.map((tipo) => <option key={tipo} value={tipo}>{tipo}</option>)}
+          <option value="Todos">{t('common.allTypes')}</option>
+          {TIPOS_INTERVENCAO.map((tipo) => <option key={tipo} value={tipo}>{tTipo(tipo)}</option>)}
         </select>
         <button
           className={styles.btnExport}
@@ -212,22 +358,22 @@ export default function Manutencoes() {
           type="button"
         >
           <Download size={14} strokeWidth={2} />
-          Exportar PDF
+          {t('manutencoes_page.exportarPdf')}
         </button>
       </div>
 
-      {loadingPage && <div className={styles.empty}>A carregar…</div>}
+      {loadingPage && <div className={styles.empty}>{t('common.loading')}</div>}
 
       {!loadingPage && (
         <ResourceTable
-          columns={['#', 'Equipamento', 'Descrição', 'Tipo', 'Data Realizada', 'Próxima Manutenção', 'Custo (€)', 'SC/PO']}
+          columns={['#', t('common.equipment'), t('common.description'), t('common.type'), t('manutencoes.performed'), t('manutencoes.next'), t('manutencoes_page.custo'), t('manutencoes_page.scPo')]}
           items={manutencoesFiltered}
           renderRow={renderRow}
           loading={false}
           emptyNode={(
             manutencoesFiltered.length === 0 && (filtro || filtroTipo !== 'Todos')
-              ? <div className={styles.empty}>Nenhum resultado para os filtros atuais.</div>
-              : <div className={styles.empty}>Nenhuma manutenção registada.</div>
+              ? <div className={styles.empty}>{t('manutencoes_page.semResultados')}</div>
+              : <div className={styles.empty}>{t('manutencoes_page.semManutencoes')}</div>
           )}
           wrapperClass={styles.tableWrap}
           tableClass={styles.table}
@@ -239,15 +385,15 @@ export default function Manutencoes() {
           <div className={`${eqStyles.modal} ${eqStyles.modalWide}`} onClick={(e) => e.stopPropagation()}>
 
             <div className={eqStyles.modalHeader}>
-              <div className="label">Manutenção</div>
-              <h2 className={eqStyles.modalTitle}>Registar Manutenção</h2>
+              <div className="label">{t('manutencoes_page.modalLabel')}</div>
+              <h2 className={eqStyles.modalTitle}>{t('manutencoes.new')}</h2>
             </div>
 
             <div className={eqStyles.fields}>
               <div className={eqStyles.formGrid}>
 
                 <label className={eqStyles.field} style={{ gridColumn: '1 / -1' }}>
-                  <span className="label">Equipamento *</span>
+                  <span className="label">{t('common.equipment')} *</span>
                   <select
                     className={eqStyles.input}
                     value={eqSel}
@@ -260,33 +406,33 @@ export default function Manutencoes() {
                 </label>
 
                 <label className={eqStyles.field} style={{ gridColumn: '1 / -1' }}>
-                  <span className="label">Descrição *</span>
+                  <span className="label">{t('common.description')} *</span>
                   <textarea
                     className={eqStyles.input}
                     rows={3}
                     style={{ resize: 'vertical' }}
                     value={form.descricao}
                     onChange={(e) => setForm((f) => ({ ...f, descricao: e.target.value }))}
-                    placeholder="O que foi feito…"
+                    placeholder={t('manutencoes_page.descricaoPlaceholder')}
                   />
                 </label>
 
                 <label className={eqStyles.field}>
-                  <span className="label">Tipo de Intervenção</span>
+                  <span className="label">{t('manutencoes_page.tipoIntervencao')}</span>
                   <select
                     className={eqStyles.input}
                     value={form.tipo_intervencao}
                     onChange={(e) => setForm((f) => ({ ...f, tipo_intervencao: e.target.value }))}
                   >
-                    <option value="">— Selecionar —</option>
-                    {TIPOS_INTERVENCAO.map((t) => (
-                      <option key={t} value={t}>{t}</option>
+                    <option value="">{t('manutencoes_page.selecionarTipo')}</option>
+                    {TIPOS_INTERVENCAO.map((tp) => (
+                      <option key={tp} value={tp}>{tTipo(tp)}</option>
                     ))}
                   </select>
                 </label>
 
                 <label className={eqStyles.field}>
-                  <span className="label">Data Realizada *</span>
+                  <span className="label">{t('manutencoes.performed')} *</span>
                   <input
                     type="datetime-local"
                     className={eqStyles.input}
@@ -296,7 +442,7 @@ export default function Manutencoes() {
                 </label>
 
                 <label className={eqStyles.field}>
-                  <span className="label">Próxima Manutenção</span>
+                  <span className="label">{t('manutencoes.next')}</span>
                   <input
                     type="datetime-local"
                     className={eqStyles.input}
@@ -306,7 +452,7 @@ export default function Manutencoes() {
                 </label>
 
                 <label className={eqStyles.field}>
-                  <span className="label">Custo (€)</span>
+                  <span className="label">{t('manutencoes_page.custoLabel')}</span>
                   <input
                     type="number"
                     min="0"
@@ -319,25 +465,40 @@ export default function Manutencoes() {
                 </label>
 
                 <label className={eqStyles.field}>
-                  <span className="label">Referência SC/PO</span>
+                  <span className="label">{t('manutencoes_page.referenciaSCPO')}</span>
                   <input
                     type="text"
                     className={eqStyles.input}
                     value={form.referencia_sc_po}
                     onChange={(e) => setForm((f) => ({ ...f, referencia_sc_po: e.target.value }))}
-                    placeholder="Ex: SC-12345 / PO-98765"
+                    placeholder={t('manutencoes_page.referenciaSCPOPlaceholder')}
                   />
                 </label>
 
+                <label className={eqStyles.field}>
+                  <span className="label">{t('manutencoes_page.fornecedor')}</span>
+                  <input
+                    type="text"
+                    className={eqStyles.input}
+                    value={formFornecedor}
+                    onChange={(e) => setFormFornecedor(e.target.value)}
+                    placeholder={t('manutencoes_page.fornecedorPlaceholder')}
+                    list="mnt-fornecedores-list"
+                  />
+                  <datalist id="mnt-fornecedores-list">
+                    {fornecedoresExistentes.map((f) => <option key={f} value={f} />)}
+                  </datalist>
+                </label>
+
                 <label className={eqStyles.field} style={{ gridColumn: '1 / -1' }}>
-                  <span className="label">Observações</span>
+                  <span className="label">{t('manutencoes_page.observacoes')}</span>
                   <textarea
                     className={eqStyles.input}
                     rows={2}
                     style={{ resize: 'vertical' }}
                     value={form.observacoes_externas}
                     onChange={(e) => setForm((f) => ({ ...f, observacoes_externas: e.target.value }))}
-                    placeholder="Empresa externa, nº de proposta, observações adicionais…"
+                    placeholder={t('manutencoes_page.observacoesPlaceholder')}
                   />
                 </label>
 
@@ -348,7 +509,7 @@ export default function Manutencoes() {
 
             <div className={eqStyles.modalActions}>
               <button className={eqStyles.btnSecondary} onClick={closeModal} type="button">
-                Cancelar
+                {t('common.cancel')}
               </button>
               <button
                 className={eqStyles.btnPrimary}
@@ -356,7 +517,7 @@ export default function Manutencoes() {
                 disabled={saving}
                 type="button"
               >
-                {saving ? 'A guardar...' : 'Registar Manutenção'}
+                {saving ? `${t('common.loading')}` : t('manutencoes.new')}
               </button>
             </div>
 

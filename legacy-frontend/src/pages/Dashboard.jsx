@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { FileDown } from 'lucide-react'
 import { BsMicrosoftTeams } from 'react-icons/bs'
 import { Link, useNavigate } from 'react-router-dom'
@@ -10,8 +11,14 @@ import { api } from '../api/index.js'
 import StatusBadge, { normalizarEstadoEquipamento } from '../components/StatusBadge.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
+import { useLanguage } from '../contexts/useLanguage.js'
 import styles from './Dashboard.module.css'
 import { corDoUtilizador, hexToRgba } from '../utils/coresUtilizadores.js'
+import {
+  calcularTotalPlaneadoAteAgoraH,
+  calcularOEEDinamico,
+  calcularDesvioDinamico,
+} from '../utils/calculations.js'
 
 // Cor dinâmica OEE: Vermelho (<50%), Amarelo (50–85%), Verde (>85%)
 const corOEE = (pct) =>
@@ -64,6 +71,8 @@ export default function Dashboard() {
   const toast = useToast()
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { t, lang } = useLanguage()
+  const locale = lang === 'pt' ? 'pt-PT' : 'en-GB'
   const [equipamentos, setEquipamentos] = useState([])
   const [loading, setLoading] = useState(true)
   const [reservas, setReservas] = useState([])
@@ -74,6 +83,7 @@ export default function Dashboard() {
   const [reservaForm, setReservaForm] = useState({ utilizador_id: '', projeto: '', notas: '' })
   const [exportingPlaneamento, setExportingPlaneamento] = useState(false)
   const [oeeData, setOeeData] = useState(null)
+  const [oeeHistorico, setOeeHistorico] = useState([])
 
   const handleDateSelect = (selectInfo) => {
     setSelectionInfo(selectInfo)
@@ -95,11 +105,12 @@ export default function Dashboard() {
       } else {
         setUtilizadores([])
       }
-      // OEE summary é carregado em paralelo sem bloquear o resto do dashboard
+      // OEE summary e histórico carregados em paralelo sem bloquear o dashboard
       api.oeeGlobalSummary(30).then(setOeeData).catch(() => {})
+      api.oeeHistorico(30).then(setOeeHistorico).catch(() => {})
     } catch (e) {
       setErro(e.message)
-      toast.error(`Falha ao carregar dashboard: ${e.message}`)
+      toast.error(t('dashboard.erroCarregarDashboard', { msg: e.message }))
     } finally {
       setLoading(false)
     }
@@ -108,7 +119,7 @@ export default function Dashboard() {
   const handleSaveReservation = async (e) => {
     e.preventDefault()
     if (!selectionInfo || !reservaForm.utilizador_id) {
-      toast.error('Seleciona um utilizador para criar a reserva.')
+      toast.error(t('dashboard.erroSelecionarUtilizador'))
       return
     }
 
@@ -123,12 +134,12 @@ export default function Dashboard() {
 
     try {
       await api.criarReserva(novaReserva)
-      toast.success('Reserva criada com sucesso no calendário.')
+      toast.success(t('dashboard.sucessoReservaCriada'))
       setIsModalOpen(false)
       setReservaForm({ utilizador_id: '', projeto: '', notas: '' })
       await carregarDados()
     } catch (error) {
-      toast.error(`Erro ao gravar reserva: ${error.message}`)
+      toast.error(t('dashboard.erroGravarReserva', { msg: error.message }))
     }
   }
 
@@ -139,7 +150,7 @@ export default function Dashboard() {
 
   const handleShareTeams = () => {
     const url = window.location.href
-    const teamsUrl = `https://teams.microsoft.com/l/chat/0/0?users=&message=Segue o relatório do Dashboard do Laboratório: ${url}`
+    const teamsUrl = `https://teams.microsoft.com/l/chat/0/0?users=&message=${encodeURIComponent('Segue o relatório do Dashboard do Laboratório: ' + url)}`
     window.open(teamsUrl, '_blank')
   }
 
@@ -153,14 +164,14 @@ export default function Dashboard() {
       const pad = (n) => String(n).padStart(2, '0')
       const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`
       a.href = url
-      a.download = `planeamento-${stamp}.pdf`
+      a.download = `Lab_Status_Global_${stamp}.pdf`
       document.body.appendChild(a)
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
-      toast.success('PDF do planeamento exportado com sucesso.')
+      toast.success(t('dashboard.sucessoPdfExportado'))
     } catch (error) {
-      toast.error(error.message || 'Não foi possível exportar o PDF do planeamento.')
+      toast.error(error.message || t('dashboard.erroPdfExportar'))
     } finally {
       setExportingPlaneamento(false)
     }
@@ -192,10 +203,49 @@ export default function Dashboard() {
       .slice(0, 4)
   }, [reservas])
 
-  const oeeIndividualMap = useMemo(() => {
-    if (!oeeData?.individual) return {}
-    return Object.fromEntries(oeeData.individual.map(item => [item.id, item]))
-  }, [oeeData])
+  const reservasPorEquipamento = useMemo(() => {
+    const map = {}
+    for (const r of reservas) {
+      if (!map[r.equipamento_id]) map[r.equipamento_id] = []
+      map[r.equipamento_id].push(r)
+    }
+    return map
+  }, [reservas])
+
+  // Recalcula OEE por equipamento usando janelamento temporal até ao momento atual.
+  // Reservas futuras (planeadoAteAgora == 0) são excluídas da média global.
+  const { oeeMapDinamico, oeeGlobalDinamico } = useMemo(() => {
+    if (!oeeData?.individual) return { oeeMapDinamico: {}, oeeGlobalDinamico: null }
+
+    const map = {}
+    const oeesValidos = []
+
+    for (const item of oeeData.individual) {
+      const reservasEq = reservasPorEquipamento[item.id] || []
+      const planeadoAteAgoraH = calcularTotalPlaneadoAteAgoraH(reservasEq)
+      const oeeDinamico = calcularOEEDinamico(item.tempo_real_h, planeadoAteAgoraH)
+      const desvioDinamico = calcularDesvioDinamico(item.tempo_real_h, planeadoAteAgoraH)
+
+      map[item.id] = {
+        ...item,
+        planeado_ate_agora_h: planeadoAteAgoraH,
+        oee_dinamico_pct: oeeDinamico,
+        desvio_dinamico_pct: desvioDinamico,
+      }
+      if (oeeDinamico !== null) oeesValidos.push(oeeDinamico)
+    }
+
+    const global = oeesValidos.length > 0
+      ? Math.round(oeesValidos.reduce((a, b) => a + b, 0) / oeesValidos.length * 10) / 10
+      : null
+
+    return { oeeMapDinamico: map, oeeGlobalDinamico: global }
+  }, [oeeData, reservasPorEquipamento])
+
+  const oeeMediaHistorico = useMemo(() => {
+    if (!oeeHistorico.length) return null
+    return Math.round(oeeHistorico.reduce((acc, d) => acc + d.oee_pct, 0) / oeeHistorico.length)
+  }, [oeeHistorico])
 
   const taxaDisponibilidade = total ? Math.round((disponiveis / total) * 100) : 0
   const taxaAvarias = total ? Math.round((avariados / total) * 100) : 0
@@ -210,20 +260,24 @@ export default function Dashboard() {
     <div className="fade-up">
       <div className={styles.header}>
         <div>
-          <h1 className={styles.title}>Dashboard do Laboratório</h1>
+          <h1 className={styles.title}>{t('dashboard.titleLab')}</h1>
         </div>
         <div className={styles.headerRight}>
-          <span className="badge badge-ok">Sistema online</span>
+          <span className="badge badge-ok">{t('dashboard.sistemaOnline')}</span>
           <div className={styles.actionGroup}>
-            <button className={styles.btnExportPdf} onClick={handleExportPDF}>
+            <button
+              className={styles.btnExportPdf}
+              onClick={handleExportPDF}
+              disabled={exportingPlaneamento}
+            >
               <FileDown size={15} strokeWidth={2} />
-              Exportar PDF
+              {exportingPlaneamento ? t('dashboard.aExportar') : t('dashboard.exportarPdf')}
             </button>
             <button
               className={styles.btnShare}
               onClick={handleShareTeams}
-              title="Partilhar no Microsoft Teams"
-              aria-label="Partilhar no Microsoft Teams"
+              title={t('dashboard.partilharTeams')}
+              aria-label={t('dashboard.partilharTeams')}
             >
               <BsMicrosoftTeams size={18} color="#6264A7" />
             </button>
@@ -234,31 +288,31 @@ export default function Dashboard() {
       <section className={styles.heroGrid}>
         <article className={`${styles.heroCard} ${styles[`heroCard_${statusVisual}`]}`}>
           <div className={styles.heroTop}>
-            <span className={styles.heroLabel}>Estado operacional</span>
+            <span className={styles.heroLabel}>{t('dashboard.estadoOperacional')}</span>
             <span className={`${styles.heroValue} ${styles[`heroValue_${statusVisual}`]}`}>{taxaDisponibilidade}%</span>
           </div>
           <div className={styles.heroTrack}>
             <div className={`${styles.heroTrackFill} ${styles[`heroTrackFill_${statusVisual}`]}`} style={{ width: `${taxaDisponibilidade}%` }} />
           </div>
           <div className={styles.heroMeta}>
-            <span>{disponiveis} disponíveis</span>
+            <span>{disponiveis} {t('dashboard.disponiveis')}</span>
             <span>{total} total</span>
           </div>
         </article>
 
         <article className={styles.alertCard}>
-          <div className={styles.alertTitle}>Atenção necessária</div>
+          <div className={styles.alertTitle}>{t('dashboard.atencaoNecessaria')}</div>
           {semAlertasCriticos ? (
-            <div className={styles.goodNews}>Sem falhas críticas no momento.</div>
+            <div className={styles.goodNews}>{t('dashboard.semFalhasCriticas')}</div>
           ) : (
             <>
               <div className={styles.alertNumbers}>
-                <div><strong>{avariados}</strong> avariados</div>
-                <div><strong>{manut}</strong> manutenção</div>
-                <div><strong>{calib}</strong> calibração</div>
-                <div><strong>{ocupados}</strong> ocupados</div>
+                <div><strong>{avariados}</strong> {t('dashboard.avariados')}</div>
+                <div><strong>{manut}</strong> {t('dashboard.manutencao')}</div>
+                <div><strong>{calib}</strong> {t('dashboard.calibracao')}</div>
+                <div><strong>{ocupados}</strong> {t('dashboard.ocupados')}</div>
               </div>
-              <div className={styles.alertFoot}>{taxaAvarias > 0 ? `${taxaAvarias}% da frota com avaria.` : 'Monitorização ativa em curso.'}</div>
+              <div className={styles.alertFoot}>{taxaAvarias > 0 ? t('dashboard.frotaAvaria', { percent: taxaAvarias }) : t('dashboard.monitorizacaoAtiva')}</div>
             </>
           )}
         </article>
@@ -268,84 +322,82 @@ export default function Dashboard() {
       <section className={styles.oeeSection}>
         <article className={styles.oeeCard}>
           <div className={styles.oeeCardLabel} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            OEE Global
+            {t('dashboard.oee')}
             <span
-              title="OEE baseado na relação entre tempo de uso real e tempo reservado. Equipamentos sem reservas são excluídos da média."
+              title={t('dashboard.oeeTooltip')}
               style={{ cursor: 'help', fontSize: 11, color: 'var(--text-dim)', border: '1px solid var(--text-dim)', borderRadius: '50%', width: 15, height: 15, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
             >
               ?
             </span>
           </div>
           <div className={styles.oeeCardMain}>
-            <RadialGauge value={oeeData?.oee_global ?? null} />
+            <RadialGauge value={oeeGlobalDinamico ?? null} />
             <div>
               <div
                 className={styles.oeeCardValue}
-                style={{ color: oeeData?.oee_global !== null && oeeData?.oee_global !== undefined ? corOEE(oeeData.oee_global) : 'var(--text-dim)' }}
+                style={{ color: oeeGlobalDinamico !== null ? corOEE(oeeGlobalDinamico) : 'var(--text-dim)' }}
               >
-                {oeeData?.oee_global !== null && oeeData?.oee_global !== undefined ? `${oeeData.oee_global.toFixed(1)}%` : '—'}
+                {oeeGlobalDinamico !== null ? `${oeeGlobalDinamico.toFixed(1)}%` : '—'}
               </div>
-              <div className={styles.oeeCardSub}>Média dos equipamentos com reservas</div>
+              <div className={styles.oeeCardSub}>{t('dashboard.mediaEquipamentos')}</div>
             </div>
           </div>
         </article>
 
         <article className={styles.oeeCard}>
-          <div className={styles.oeeCardLabel}>Disponibilidade Global</div>
-          <div
-            className={styles.oeeCardValue}
-            style={{ color: oeeData?.disponibilidade_global !== null && oeeData?.disponibilidade_global !== undefined ? corOEE(oeeData.disponibilidade_global) : 'var(--text-dim)', marginTop: 10 }}
-          >
-            {oeeData?.disponibilidade_global !== null && oeeData?.disponibilidade_global !== undefined ? `${oeeData.disponibilidade_global.toFixed(1)}%` : '—'}
+          <div className={styles.oeeCardLabel} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            MTBF
+            <span
+              title="Tempo médio entre avarias (IEC 60050-192)"
+              style={{ cursor: 'help', fontSize: 11, color: 'var(--text-dim)', border: '1px solid var(--text-dim)', borderRadius: '50%', width: 15, height: 15, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
+            >
+              ?
+            </span>
           </div>
-          <div className={styles.miniMeter} style={{ marginTop: 12 }}>
-            <div
-              className={styles.miniMeterFill}
-              style={{
-                width: `${Math.min(100, oeeData?.disponibilidade_global ?? 0)}%`,
-                backgroundColor: corOEE(oeeData?.disponibilidade_global ?? 0),
-              }}
-            />
+          <div className={styles.oeeCardValue} style={{ color: 'var(--text-primary)', marginTop: 10 }}>
+            {oeeData?.mtbf_h != null ? oeeData.mtbf_h.toFixed(1) : '—'}
+            {oeeData?.mtbf_h != null && <span style={{ fontSize: '0.9rem', fontWeight: 400, marginLeft: 4, color: 'var(--text-secondary)' }}>h</span>}
           </div>
-          <div className={styles.oeeCardSub} style={{ marginTop: 8 }}>Tempo Real / Tempo Planeado</div>
+          <div className={styles.oeeCardSub} style={{ marginTop: 8 }}>
+            {oeeData?.n_avarias_periodo != null ? `${oeeData.n_avarias_periodo} avaria(s) em 30 dias` : 'Sem avarias no período'}
+          </div>
         </article>
 
         <article className={styles.oeeCard}>
-          <div className={styles.oeeCardLabel}>Performance Global</div>
-          <div
-            className={styles.oeeCardValue}
-            style={{ color: corOEE(oeeData?.performance_global ?? 100), marginTop: 10 }}
-          >
-            {oeeData ? `${(oeeData.performance_global ?? 100).toFixed(0)}%` : '—'}
+          <div className={styles.oeeCardLabel} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            MTTR
+            <span
+              title="Tempo médio de reparação"
+              style={{ cursor: 'help', fontSize: 11, color: 'var(--text-dim)', border: '1px solid var(--text-dim)', borderRadius: '50%', width: 15, height: 15, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
+            >
+              ?
+            </span>
           </div>
-          <div className={styles.miniMeter} style={{ marginTop: 12 }}>
-            <div
-              className={styles.miniMeterFill}
-              style={{
-                width: `${oeeData?.performance_global ?? 0}%`,
-                backgroundColor: corOEE(oeeData?.performance_global ?? 100),
-              }}
-            />
+          <div className={styles.oeeCardValue} style={{ color: 'var(--text-primary)', marginTop: 10 }}>
+            {oeeData?.mttr_h != null ? oeeData.mttr_h.toFixed(1) : '—'}
+            {oeeData?.mttr_h != null && <span style={{ fontSize: '0.9rem', fontWeight: 400, marginLeft: 4, color: 'var(--text-secondary)' }}>h</span>}
           </div>
-          <div className={styles.oeeCardSub} style={{ marginTop: 8 }}>Qualidade e Cadência assumidas = 100%</div>
+          <div className={styles.oeeCardSub} style={{ marginTop: 8 }}>
+            {oeeData?.n_avarias_resolvidas != null ? `${oeeData.n_avarias_resolvidas} avaria(s) resolvida(s)` : 'Sem resoluções no período'}
+          </div>
         </article>
       </section>
 
       <section className={styles.kpiRow}>
         <div className={styles.kpiItem}>
-          <span className={styles.kpiLabel}>Equipamentos</span>
+          <span className={styles.kpiLabel}>{t('equipamentos.title')}</span>
           <strong>{total}</strong>
         </div>
         <div className={styles.kpiItem}>
-          <span className={styles.kpiLabel}>Reservas ativas</span>
+          <span className={styles.kpiLabel}>{t('dashboard.reservasAtivas')}</span>
           <strong>{reservas.length}</strong>
         </div>
         <div className={styles.kpiItem}>
-          <span className={styles.kpiLabel}>Utilizadores</span>
+          <span className={styles.kpiLabel}>{t('utilizadores.title')}</span>
           <strong>{utilizadores.length}</strong>
         </div>
         <div className={styles.kpiItem}>
-          <span className={styles.kpiLabel}>Disponibilidade</span>
+          <span className={styles.kpiLabel}>{t('dashboard.availability')}</span>
           <strong>{taxaDisponibilidade}%</strong>
         </div>
       </section>
@@ -353,22 +405,22 @@ export default function Dashboard() {
       <section className={styles.dualGrid}>
         <div className={styles.section}>
           <div className={styles.sectionHeader}>
-            <div className="label">Próximas Reservas</div>
-            <Link to="/reservas" className={styles.seeAll}>Ver calendário →</Link>
+            <div className="label">{t('dashboard.proximasReservas')}</div>
+            <Link to="/reservas" className={styles.seeAll}>{t('dashboard.verCalendario')}</Link>
           </div>
 
           {proximasReservas.length === 0 ? (
-            <div className={styles.empty}>Sem reservas futuras.</div>
+            <div className={styles.empty}>{t('dashboard.semReservas')}</div>
           ) : (
             <ul className={styles.timeline}>
               {proximasReservas.map((r) => (
                 <li key={r.id} className={styles.timelineItem}>
                   <div>
                     <div className={styles.timelineTitle}>{r.equipamento_nome || `Equipamento #${r.equipamento_id}`}</div>
-                    <div className={styles.timelineMeta}>{r.utilizador_nome || 'Utilizador não definido'} {r.projeto ? `• ${r.projeto}` : ''}</div>
+                    <div className={styles.timelineMeta}>{r.utilizador_nome || t('dashboard.utilizadorNaoDefinido')} {r.projeto ? `• ${r.projeto}` : ''}</div>
                   </div>
                   <div className={styles.timelineDate}>
-                    {new Date(r.data_inicio).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    {new Date(r.data_inicio).toLocaleString(locale, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                   </div>
                 </li>
               ))}
@@ -377,7 +429,7 @@ export default function Dashboard() {
         </div>
 
         <div className={styles.section}>
-          <div className="label" style={{ marginBottom: 14 }}>Distribuição por Estado</div>
+          <div className="label" style={{ marginBottom: 14 }}>{t('dashboard.distribuicaoEstado')}</div>
           <div className={styles.barRow}>
             {ESTADOS.map((estado) => {
               const count = equipamentos.filter((e) => normalizarEstadoEquipamento(e.estado_atual) === estado).length
@@ -402,16 +454,16 @@ export default function Dashboard() {
 
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className="label">Planeamento Global</div>
+          <div className="label">{t('dashboard.planeamentoGlobal')}</div>
           <div className={styles.sectionActions}>
             <button
               className={styles.exportBtn}
               onClick={handleExportarPlaneamentoPdf}
               disabled={exportingPlaneamento}
             >
-              {exportingPlaneamento ? 'A exportar...' : 'Exportar PDF'}
+              {exportingPlaneamento ? t('dashboard.aExportar') : t('dashboard.exportarPdf')}
             </button>
-            <span className={styles.hint}>Seleciona no calendário para criar reserva</span>
+            <span className={styles.hint}>{t('dashboard.selecionaCalendario')}</span>
           </div>
         </div>
         <div className={styles.calendarWrap}>
@@ -431,7 +483,7 @@ export default function Dashboard() {
                 locale="pt"
                 height="390px"
                 resourceAreaWidth="240px"
-                resourceAreaHeaderContent="Equipamentos"
+                resourceAreaHeaderContent={t('equipamentos.title')}
                 slotMinWidth={56}
                 views={{
                   resourceTimelineDay: {
@@ -464,7 +516,7 @@ export default function Dashboard() {
                   return {
                     id: String(res.id),
                     resourceId: String(res.equipamento_id),
-                    title: `${res.projeto || 'Reserva'} - ${res.utilizador_nome || 'Utilizador'}`,
+                    title: `${res.projeto || t('reservas.title')} - ${res.utilizador_nome || t('common.user')}`,
                     start: res.data_inicio,
                     end: res.data_fim,
                     backgroundColor: emCurso ? cor : hexToRgba(cor, 0.28),
@@ -480,32 +532,36 @@ export default function Dashboard() {
 
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className="label">Performance OEE</div>
+          <div className="label">{t('dashboard.performanceOEE')}</div>
         </div>
         <div className={styles.oeeTableWrap}>
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>Equipamento</th>
-                <th>Tipo</th>
-                <th>Tempo Planeado (h)</th>
-                <th>Tempo Real (h)</th>
-                <th>Performance OEE</th>
+                <th>{t('common.equipment')}</th>
+                <th>{t('common.type')}</th>
+                <th>{t('dashboard.planeadoAteAgora')}</th>
+                <th>{t('dashboard.tempoReal')}</th>
+                <th>{t('dashboard.performanceOEE')}</th>
               </tr>
             </thead>
             <tbody>
               {recentes.length > 0 ? recentes.map((eq) => {
-                const oeeItem = oeeIndividualMap[eq.id]
-                const oeePct = oeeItem?.oee_pct          // sempre ≤ 100% (capped no backend)
-                const desvio = oeeItem?.desvio_planeamento_pct ?? 0
+                const oeeItem = oeeMapDinamico[eq.id]
+                const oeePct = oeeItem?.oee_dinamico_pct
+                const desvio = oeeItem?.desvio_dinamico_pct ?? 0
                 const temDesvio = desvio > 0
-                // Cor de aviso laranja quando o tempo real excedeu o planeado
+                // Laranja quando o tempo real excedeu o planeado até agora
                 const corBarra = temDesvio ? '#f97316' : (oeePct !== null && oeePct !== undefined ? corOEE(oeePct) : '#d1d5db')
                 return (
                   <tr key={eq.id} onClick={() => navigate(`/equipamentos/${eq.id}`)} className={styles.tableRow}>
                     <td style={{ fontWeight: 500 }}>{eq.nome}</td>
                     <td style={{ color: 'var(--text-secondary)' }}>{eq.tipo}</td>
-                    <td className="mono">{oeeItem ? oeeItem.tempo_planeado_h.toFixed(1) : '—'}</td>
+                    <td className="mono">
+                      {oeeItem && oeeItem.planeado_ate_agora_h > 0
+                        ? oeeItem.planeado_ate_agora_h.toFixed(1)
+                        : <span style={{ color: 'var(--text-dim)' }}>—</span>}
+                    </td>
                     <td className="mono">{oeeItem ? oeeItem.tempo_real_h.toFixed(1) : '—'}</td>
                     <td>
                       {oeePct !== null && oeePct !== undefined ? (
@@ -525,7 +581,7 @@ export default function Dashboard() {
                   </tr>
                 )
               }) : (
-                <tr><td colSpan={5} className={styles.empty}>Nenhum equipamento com dados de OEE.</td></tr>
+                <tr><td colSpan={5} className={styles.empty}>{t('dashboard.nenhumEquipamentoOEE')}</td></tr>
               )}
             </tbody>
           </table>
@@ -534,11 +590,73 @@ export default function Dashboard() {
 
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className="label">Últimos Equipamentos Registados</div>
-          <Link to="/equipamentos" className={styles.seeAll}>Ver todos →</Link>
+          <div className="label">{t('dashboard.tendenciaOEE')}</div>
+          {oeeMediaHistorico !== null && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              {t('dashboard.media')}: <strong style={{ color: corOEE(oeeMediaHistorico) }}>{oeeMediaHistorico}%</strong>
+            </span>
+          )}
+        </div>
+        {oeeHistorico.length < 2 ? (
+          <div className={styles.empty}>{t('dashboard.dadosInsuficientes')}</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={oeeHistorico} margin={{ top: 8, right: 16, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis
+                dataKey="data"
+                tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                tickFormatter={(v) => {
+                  const [, m, d] = v.split('-')
+                  return `${d}/${m}`
+                }}
+              />
+              <YAxis
+                domain={[0, 100]}
+                tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                tickFormatter={(v) => `${v}%`}
+              />
+              <Tooltip
+                formatter={(value) => [`${value.toFixed(1)}%`, 'OEE']}
+                labelFormatter={(label) => {
+                  const [y, m, d] = label.split('-')
+                  return `${d}/${m}/${y}`
+                }}
+                contentStyle={{
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '8px',
+                  fontSize: '0.8rem',
+                }}
+              />
+              {oeeMediaHistorico !== null && (
+                <ReferenceLine
+                  y={oeeMediaHistorico}
+                  stroke={corOEE(oeeMediaHistorico)}
+                  strokeDasharray="4 4"
+                  label={{ value: t('dashboard.mediaOee', { value: oeeMediaHistorico }), position: 'insideTopRight', fontSize: 10, fill: corOEE(oeeMediaHistorico) }}
+                />
+              )}
+              <Line
+                type="monotone"
+                dataKey="oee_pct"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                dot={{ r: 3, fill: '#3b82f6' }}
+                activeDot={{ r: 5 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <div className="label">{t('dashboard.ultimosEquipamentos')}</div>
+          <Link to="/equipamentos" className={styles.seeAll}>{t('dashboard.verTodos')}</Link>
         </div>
 
-        {loading && <div className={styles.empty}>A carregar...</div>}
+        {loading && <div className={styles.empty}>{t('common.loading')}</div>}
         {erro && <div className={styles.erro}>Erro: {erro}</div>}
 
         {!loading && !erro && (
@@ -546,10 +664,10 @@ export default function Dashboard() {
             <thead>
               <tr>
                 <th>#</th>
-                <th>Nome</th>
-                <th>Tipo</th>
-                <th>Localização</th>
-                <th>Estado</th>
+                <th>{t('common.name')}</th>
+                <th>{t('common.type')}</th>
+                <th>{t('common.location')}</th>
+                <th>{t('common.status')}</th>
               </tr>
             </thead>
             <tbody>
@@ -563,7 +681,7 @@ export default function Dashboard() {
                 </tr>
               ))}
               {recentes.length === 0 && (
-                <tr><td colSpan={5} className={styles.empty}>Nenhum equipamento registado ainda.</td></tr>
+                <tr><td colSpan={5} className={styles.empty}>{t('dashboard.nenhumEquipamento')}</td></tr>
               )}
             </tbody>
           </table>
@@ -573,16 +691,16 @@ export default function Dashboard() {
       {isModalOpen && (
         <div className={styles.modalOverlay}>
           <div className={styles.modalContent}>
-            <h3>Nova Reserva de Equipamento</h3>
+            <h3>{t('dashboard.novaReserva')}</h3>
             <form onSubmit={handleSaveReservation} className={styles.modalForm}>
               <div className={styles.formGroup}>
-                <label>Operador Responsável</label>
+                <label>{t('dashboard.operadorResponsavel')}</label>
                 <select
                   value={reservaForm.utilizador_id}
                   onChange={(ev) => setReservaForm((s) => ({ ...s, utilizador_id: ev.target.value }))}
                   required
                 >
-                  <option value="">Selecionar utilizador...</option>
+                  <option value="">{t('dashboard.selecionarUtilizador')}</option>
                   {utilizadores.map((u) => (
                     <option key={u.id} value={u.id}>{u.nome} ({u.departamento})</option>
                   ))}
@@ -590,30 +708,30 @@ export default function Dashboard() {
               </div>
 
               <div className={styles.formGroup}>
-                <label>Projeto / ID do Ensaio</label>
+                <label>{t('dashboard.projetoEnsaio')}</label>
                 <input
                   type="text"
                   value={reservaForm.projeto}
-                  placeholder="Ex: Lab-EV-Phase2"
+                  placeholder={t('dashboard.projetoPlaceholder')}
                   onChange={(ev) => setReservaForm((s) => ({ ...s, projeto: ev.target.value }))}
                 />
               </div>
               <div className={styles.formGroup}>
-                <label>Notas (opcional)</label>
+                <label>{t('dashboard.notasOpcional')}</label>
                 <input
                   type="text"
                   value={reservaForm.notas}
-                  placeholder="Detalhes rápidos da reserva"
+                  placeholder={t('dashboard.notasPlaceholder')}
                   onChange={(ev) => setReservaForm((s) => ({ ...s, notas: ev.target.value }))}
                 />
               </div>
 
               <div className={styles.modalActions}>
                 <button type="button" className={styles.btnCancel} onClick={() => setIsModalOpen(false)}>
-                  Cancelar
+                  {t('common.cancel')}
                 </button>
                 <button type="submit" className={styles.btnSave}>
-                  Confirmar Reserva
+                  {t('dashboard.confirmarReserva')}
                 </button>
               </div>
             </form>

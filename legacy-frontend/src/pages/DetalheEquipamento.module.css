@@ -223,6 +223,23 @@
 .btnAmber:hover:not(:disabled) { opacity: 0.85; }
 .btnAmber:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Banner de aviso industrial para Modo Limitado.
+   Porquê: #92400e sobre #fef3c7 → rácio de contraste ≈7.5:1 (WCAG AA exige ≥4.5:1).
+   Borda #d97706 reforça o alerta sem usar vermelho, que está reservado para falha total (Avariado). */
+.bannerAmber {
+  padding: 12px 16px;
+  background: #fef3c7;
+  border: 2px solid #d97706;
+  border-radius: var(--radius);
+  color: #92400e;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  width: 100%;
+}
+
 .btnRed {
   background: transparent;
   color: var(--red);

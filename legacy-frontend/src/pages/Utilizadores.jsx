@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react'
 import { api } from '../api/index.js'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
+import { useLanguage } from '../contexts/useLanguage.js'
 import styles from './Utilizadores.module.css'
 import { corDoUtilizador } from '../utils/coresUtilizadores.js'
 
-const EMPTY = { nome: '', numero_colaborador: '', departamento: '', role: 'user' }
-
 export default function Utilizadores() {
   const toast = useToast()
+  const { t } = useLanguage()
   const { user, isLoading: authLoading, openAuthPrompt, openBootstrapPrompt, bootstrapAvailable } = useAuth()
   const [utilizadores, setUtilizadores] = useState([])
   const [loading, setLoading] = useState(true)
@@ -28,26 +28,23 @@ export default function Utilizadores() {
         setUtilizadores(data)
         setRoleDrafts(Object.fromEntries(data.map((ut) => [ut.id, ut.role || 'user'])))
       })
-      .catch((e) => toast.error(`Falha ao carregar utilizadores: ${e.message}`))
+      .catch((e) => toast.error(`${t('utilizadores.errorLoad')}: ${e.message}`))
       .finally(() => setLoading(false))
   }
 
   useEffect(() => { carregar() }, [user?.role])
 
-  
-
   const handleEliminar = async (id, nome) => {
-    if (!window.confirm(`Eliminar o utilizador "${nome}"?`)) return
+    if (!window.confirm(t('utilizadores_page.confirmarEliminar', { nome }))) return
     try {
       await api.eliminarUtilizador(id)
-      // Remove imediatamente do estado local para evitar flash antes do re-fetch
       setUtilizadores((prev) => prev.filter((u) => u.id !== id))
       setEditingRows((prev) => { const c = { ...prev }; delete c[id]; return c })
       setRoleDrafts((prev) => { const c = { ...prev }; delete c[id]; return c })
-      toast.success('Utilizador eliminado com sucesso.')
+      toast.success(t('utilizadores_page.eliminadoSucesso'))
       carregar()
     } catch (e) {
-      toast.error(e.message || 'Não foi possível eliminar o utilizador.')
+      toast.error(e.message || t('utilizadores_page.erroEliminar'))
     }
   }
 
@@ -55,10 +52,10 @@ export default function Utilizadores() {
     setRoleSavingId(id)
     try {
       await api.atualizarUtilizador(id, { role })
-      toast.success('Permissões atualizadas com sucesso.')
+      toast.success(t('utilizadores_page.permissoesSucesso'))
       carregar()
     } catch (e) {
-      toast.error(e.message || 'Não foi possível atualizar as permissões.')
+      toast.error(e.message || t('utilizadores_page.erroPermissoes'))
     } finally {
       setRoleSavingId(null)
     }
@@ -91,22 +88,22 @@ export default function Utilizadores() {
     const draft = editingRows[id]
     if (!draft) return
     if (!draft.nome || !draft.numero_colaborador || !draft.departamento) {
-      toast.error('Todos os campos são obrigatórios.')
+      toast.error(t('utilizadores_page.erroCamposObrigatorios'))
       return
     }
     try {
       setRoleSavingId(id)
       if (id === 'new') {
         await api.criarUtilizador(draft)
-        toast.success('Utilizador criado. PIN inicial: 0000 (obrigatório alterar no primeiro login).')
+        toast.success(t('utilizadores_page.criadoSucesso'))
       } else {
         await api.atualizarUtilizador(id, draft)
-        toast.success('Utilizador atualizado com sucesso.')
+        toast.success(t('utilizadores_page.atualizadoSucesso'))
       }
       setEditingRows((prev) => { const c = { ...prev }; delete c[id]; return c })
       carregar()
     } catch (e) {
-      toast.error(e.message || 'Não foi possível atualizar o utilizador.')
+      toast.error(e.message || t('utilizadores_page.erroAtualizar'))
     } finally {
       setRoleSavingId(null)
     }
@@ -115,7 +112,7 @@ export default function Utilizadores() {
   if (authLoading) {
     return (
       <div className="fade-up">
-        <div className={styles.empty}>A verificar a sessão…</div>
+        <div className={styles.empty}>{t('common.loading')}</div>
       </div>
     )
   }
@@ -125,22 +122,22 @@ export default function Utilizadores() {
       <div className="fade-up">
         <div className={styles.header}>
           <div>
-            <div className="label">Gestão</div>
-            <h1 className={styles.title}>Utilizadores</h1>
+            <div className="label">{t('utilizadores_page.subtitulo')}</div>
+            <h1 className={styles.title}>{t('utilizadores.title')}</h1>
           </div>
         </div>
 
         <div className={styles.empty}>
-          Esta aba é visível para todos. A gestão de utilizadores e permissões só está disponível para administradores.
+          {t('utilizadores_page.acessoNegado')}
         </div>
 
         <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
           <button className={styles.btnPrimary} onClick={() => openAuthPrompt('login')}>
-            Entrar como administrador
+            {t('utilizadores_page.entrarAdmin')}
           </button>
           {bootstrapAvailable && (
             <button className={styles.btnSecondary} onClick={openBootstrapPrompt}>
-              Criar primeiro administrador
+              {t('utilizadores_page.criarPrimeiroAdmin')}
             </button>
           )}
         </div>
@@ -152,20 +149,20 @@ export default function Utilizadores() {
     <div className="fade-up">
         <div className={styles.header}>
         <div>
-          <div className="label">Gestão</div>
-          <h1 className={styles.title}>Utilizadores</h1>
+          <div className="label">{t('utilizadores_page.subtitulo')}</div>
+          <h1 className={styles.title}>{t('utilizadores.title')}</h1>
         </div>
         <button className={styles.btnPrimary} onClick={() => startCreateRow()}>
-          + Novo Utilizador
+          + {t('utilizadores.new')}
         </button>
       </div>
 
       <div className={styles.legendaCores}>
         <span className={styles.legendaIcone}>◉</span>
-        A cor junto ao nome identifica as reservas de cada utilizador no calendário.
+        {t('utilizadores_page.legendaCores')}
       </div>
 
-      {loading && <div className={styles.empty}>A carregar…</div>}
+      {loading && <div className={styles.empty}>{t('common.loading')}</div>}
 
       {!loading && (
         <div className={styles.tableWrap}>
@@ -173,11 +170,11 @@ export default function Utilizadores() {
             <thead>
               <tr>
                 <th>#</th>
-                <th>Nome</th>
-                <th>Nº Colaborador</th>
-                <th>Departamento</th>
-                <th style={{ width: 100 }}>PIN</th>
-                <th>Role</th>
+                <th>{t('common.name')}</th>
+                <th>{t('utilizadores_page.nColaborador')}</th>
+                <th>{t('utilizadores_page.departamento')}</th>
+                <th style={{ width: 100 }}>{t('utilizadores.pin')}</th>
+                <th>{t('utilizadores.role')}</th>
                 <th></th>
               </tr>
             </thead>
@@ -214,17 +211,17 @@ export default function Utilizadores() {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                      <button className={styles.btnPrimary} onClick={() => saveInlineEdit('new')} disabled={roleSavingId === 'new'}>{roleSavingId === 'new' ? 'A guardar…' : 'Guardar'}</button>
-                      <button className={styles.btnSecondary} onClick={() => cancelInlineEdit('new')}>Cancelar</button>
+                      <button className={styles.btnPrimary} onClick={() => saveInlineEdit('new')} disabled={roleSavingId === 'new'}>{roleSavingId === 'new' ? t('common.loading') : t('common.save')}</button>
+                      <button className={styles.btnSecondary} onClick={() => cancelInlineEdit('new')}>{t('common.cancel')}</button>
                     </div>
                   </td>
                 </tr>
               )}
               {utilizadores.map(ut => (
                 <tr key={ut.id}>
-                  <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(ut.id).padStart(3,'0')}</td>
+                  <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(ut.id).padStart(3,'00')}</td>
                   <td style={{ fontWeight: 500 }}>
-                      {editingRows[ut.id] ? (
+                    {editingRows[ut.id] ? (
                       <input autoComplete="off" className={styles.input} value={editingRows[ut.id].nome} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], nome: e.target.value } }))} />
                     ) : (
                       <span className={styles.nomeComCor}>
@@ -239,7 +236,7 @@ export default function Utilizadores() {
                     )}
                   </td>
                   <td className="mono" style={{ color: 'var(--text-secondary)' }}>
-                      {editingRows[ut.id] ? (
+                    {editingRows[ut.id] ? (
                       <input autoComplete="off" className={styles.input} value={editingRows[ut.id].numero_colaborador} onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], numero_colaborador: e.target.value } }))} />
                     ) : (
                       ut.numero_colaborador
@@ -258,7 +255,7 @@ export default function Utilizadores() {
                         type="password"
                         autoComplete="new-password"
                         className={styles.input}
-                        placeholder="Novo PIN"
+                        placeholder={t('utilizadores_page.novoPinPlaceholder')}
                         maxLength={4}
                         value={editingRows[ut.id].pin || ''}
                         onChange={e => setEditingRows(prev => ({ ...prev, [ut.id]: { ...prev[ut.id], pin: e.target.value } }))}
@@ -283,12 +280,12 @@ export default function Utilizadores() {
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                       {!editingRows[ut.id] ? (
                         <>
-                          <button className={styles.btnSecondary} onClick={() => startInlineEdit(ut)}>Editar</button>
+                          <button className={styles.btnSecondary} onClick={() => startInlineEdit(ut)}>{t('common.edit')}</button>
                         </>
                       ) : (
                         <>
-                          <button className={styles.btnPrimary} onClick={() => saveInlineEdit(ut.id)} disabled={roleSavingId === ut.id}>{roleSavingId === ut.id ? 'A guardar…' : 'Guardar'}</button>
-                          <button className={styles.btnSecondary} onClick={() => cancelInlineEdit(ut.id)}>Cancelar</button>
+                          <button className={styles.btnPrimary} onClick={() => saveInlineEdit(ut.id)} disabled={roleSavingId === ut.id}>{roleSavingId === ut.id ? t('common.loading') : t('common.save')}</button>
+                          <button className={styles.btnSecondary} onClick={() => cancelInlineEdit(ut.id)}>{t('common.cancel')}</button>
                         </>
                       )}
                       <button
@@ -296,24 +293,22 @@ export default function Utilizadores() {
                         onClick={() => handleRoleChange(ut.id, roleDrafts[ut.id] || ut.role || 'user')}
                         disabled={roleSavingId === ut.id}
                       >
-                        {roleSavingId === ut.id ? 'A guardar…' : 'Guardar permissões'}
+                        {roleSavingId === ut.id ? t('common.loading') : t('utilizadores_page.guardarPermissoes')}
                       </button>
                       <button className={styles.btnEliminar} onClick={() => handleEliminar(ut.id, ut.nome)}>
-                        Eliminar
+                        {t('common.delete')}
                       </button>
                     </div>
                   </td>
                 </tr>
               ))}
               {utilizadores.length === 0 && (
-                <tr><td colSpan={7} className={styles.empty}>Nenhum utilizador registado.</td></tr>
+                <tr><td colSpan={7} className={styles.empty}>{t('common.noData')}</td></tr>
               )}
             </tbody>
           </table>
         </div>
       )}
-
-      {/* modal removed: inline creation/editing used instead */}
     </div>
   )
 }

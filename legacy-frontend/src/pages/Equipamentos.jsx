@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import { Plus, Play, BookOpen, Pencil, Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
@@ -6,14 +6,15 @@ import { api } from '../api/index.js'
 import StatusBadge, { normalizarEstadoEquipamento } from '../components/StatusBadge.jsx'
 import EmptyState from '../components/EmptyState.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
+import { useLanguage } from '../contexts/useLanguage.js'
 import styles from './Equipamentos.module.css'
 
 const ESTADOS_UI = [
-  'Disponível',
-  'Ocupado',
-  'Em calibração',
-  'Em manutenção',
-  'Avariado',
+  { value: 'Disponível',    labelKey: 'status.disponivel' },
+  { value: 'Ocupado',       labelKey: 'status.ocupado' },
+  { value: 'Em calibração', labelKey: 'status.emCalibracao' },
+  { value: 'Em manutenção', labelKey: 'status.emManutencao' },
+  { value: 'Avariado',      labelKey: 'status.avariado' },
 ]
 
 const TIPOS = [
@@ -22,6 +23,15 @@ const TIPOS = [
   'Câmara Choque Térmico',
   'Salina',
   'Outro',
+]
+
+const CATEGORIAS = [
+  { id: 'Todos',                 labelKey: 'equipamentos.catTodos',             icone: '◈', tipos: null },
+  { id: 'Câmara Climática',      labelKey: 'equipamentos.catCamarasClimaticas', icone: '❄', tipos: ['Câmara Climática'] },
+  { id: 'Câmara Choque Térmico', labelKey: 'equipamentos.catChoqueTermico',     icone: '⚡', tipos: ['Câmara Choque Térmico'] },
+  { id: 'Forno',                 labelKey: 'equipamentos.catFornos',            icone: '🔥', tipos: ['Forno'] },
+  { id: 'Salina',                labelKey: 'equipamentos.catSalinas',           icone: '◌', tipos: ['Salina'] },
+  { id: 'Outro',                 labelKey: 'equipamentos.catOutros',            icone: '⊡', tipos: ['Outro'] },
 ]
 
 // Porque: formulário de criação simplificado para registo rápido.
@@ -184,6 +194,8 @@ function createEditForm(equipamento) {
 
 export default function Equipamentos() {
   const toast = useToast()
+  const { t, lang } = useLanguage()
+  const locale = lang === 'pt' ? 'pt-PT' : 'en-GB'
   const navigate = useNavigate()
   const [equipamentos, setEquipamentos] = useState([])
   const [loading, setLoading] = useState(true)
@@ -218,7 +230,7 @@ export default function Equipamentos() {
       setErro(null)
     } catch (e) {
       setErro(e.message)
-      toast.error(`Falha ao carregar equipamentos: ${e.message}`)
+      toast.error(t('equipamentos.erroCarregarToast', { msg: e.message }))
     } finally {
       setLoading(false)
     }
@@ -234,6 +246,67 @@ export default function Equipamentos() {
     const matchEstado = filtroEstado === 'Todos' || normalizarEstadoEquipamento(eq.estado_atual) === filtroEstado
     return matchTexto && matchEstado
   })
+
+  const [filtroCategoria, setFiltroCategoria] = useState('Todos')
+
+  // Estado de colapso persistido em localStorage — recupera preferências entre sessões
+  const [colapsadas, setColapsadas] = useState(() => {
+    try {
+      const guardado = localStorage.getItem('equipamentos-categorias-colapsadas')
+      return guardado ? new Set(JSON.parse(guardado)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+
+  const toggleCategoria = (catId) => {
+    setColapsadas((prev) => {
+      const novo = new Set(prev)
+      if (novo.has(catId)) novo.delete(catId)
+      else novo.add(catId)
+      localStorage.setItem('equipamentos-categorias-colapsadas', JSON.stringify([...novo]))
+      return novo
+    })
+  }
+
+  const expandirTodas = () => {
+    localStorage.setItem('equipamentos-categorias-colapsadas', JSON.stringify([]))
+    setColapsadas(new Set())
+  }
+
+  const recolherTodas = () => {
+    const idsComEquipamentos = CATEGORIAS
+      .filter((cat) => cat.id !== 'Todos')
+      .filter((cat) => filtradosPorCategoria.some((eq) => (cat.tipos ?? []).includes(eq.tipo)))
+      .map((cat) => cat.id)
+    const cheio = new Set(idsComEquipamentos)
+    localStorage.setItem('equipamentos-categorias-colapsadas', JSON.stringify([...cheio]))
+    setColapsadas(cheio)
+  }
+
+  // Verdadeiro se nenhuma categoria está colapsada
+  const todasExpandidas = colapsadas.size === 0
+
+  // Contagens por categoria para mostrar badges nos chips e ocultar chips sem equipamentos
+  const contagensPorCategoria = useMemo(() => {
+    return CATEGORIAS.reduce((acc, cat) => {
+      acc[cat.id] = cat.tipos === null
+        ? filtrados.length
+        : filtrados.filter((eq) => cat.tipos.includes(eq.tipo)).length
+      return acc
+    }, {})
+  }, [filtrados])
+
+  // Aplica o filtro de categoria sobre os já filtrados por texto/estado
+  const filtradosPorCategoria = useMemo(() => {
+    if (filtroCategoria === 'Todos') return filtrados
+    const cat = CATEGORIAS.find((c) => c.id === filtroCategoria)
+    if (!cat || !cat.tipos) return filtrados
+    return filtrados.filter((eq) => cat.tipos.includes(eq.tipo))
+  }, [filtrados, filtroCategoria])
+
+  // Os separadores de categoria identificam o grupo — a coluna Tipo seria ruído visual em ambos os modos
+  const mostrarColunaTipo = false
 
   const createFieldErrors = getCreateErrors(createForm, equipamentos)
   const editFieldErrors = getEditErrors(editForm)
@@ -339,8 +412,8 @@ export default function Equipamentos() {
   const handleSubmit = async () => {
     setCreateSubmittedOnce(true)
     if (createHasErrors) {
-      setCreateErro('Confirma os campos obrigatórios assinalados antes de criar o equipamento.')
-      toast.error('Existem campos obrigatórios por corrigir.')
+      setCreateErro(t('equipamentos.confirmaCamposCriar'))
+      toast.error(t('equipamentos.camposObrigatoriosErro'))
       return
     }
 
@@ -358,12 +431,12 @@ export default function Equipamentos() {
       }
 
       await api.criarEquipamento(payload)
-      toast.success(`Equipamento "${payload.nome}" criado com sucesso.`)
+      toast.success(t('equipamentos.criadoSucesso', { nome: payload.nome }))
       closeCreate()
       await carregar()
     } catch (e) {
       setCreateErro(e.message)
-      toast.error(e.message || 'Não foi possível criar o equipamento.')
+      toast.error(e.message || t('equipamentos.erroCriar'))
     } finally {
       setCreateSaving(false)
     }
@@ -374,8 +447,8 @@ export default function Equipamentos() {
 
     setEditSubmittedOnce(true)
     if (editHasErrors) {
-      setEditErro('Confirma os campos obrigatórios assinalados antes de guardar a edição.')
-      toast.error('Existem campos obrigatórios por corrigir.')
+      setEditErro(t('equipamentos.confirmaCamposEditar'))
+      toast.error(t('equipamentos.camposObrigatoriosErro'))
       return
     }
 
@@ -404,11 +477,11 @@ export default function Equipamentos() {
       const atualizado = await api.atualizarEquipamento(editEquipamento.id, payload)
       setEquipamentos((prev) => prev.map((item) => (item.id === atualizado.id ? atualizado : item)))
       setManualEquipamento((prev) => (prev && prev.id === atualizado.id ? atualizado : prev))
-      toast.success(`Equipamento "${atualizado.nome}" actualizado com sucesso.`)
+      toast.success(t('equipamentos.atualizadoSucesso', { nome: atualizado.nome }))
       closeEdit()
     } catch (e) {
       setEditErro(e.message)
-      toast.error(e.message || 'Não foi possível actualizar o equipamento.')
+      toast.error(e.message || t('equipamentos.erroAtualizar'))
     } finally {
       setEditSaving(false)
     }
@@ -429,17 +502,17 @@ export default function Equipamentos() {
       const atualizado = await api.atualizarEquipamento(manualEquipamento.id, payload)
       setEquipamentos((prev) => prev.map((item) => (item.id === atualizado.id ? atualizado : item)))
       setManualEquipamento(atualizado)
-      toast.success('Ficha Técnica actualizada com sucesso.')
+      toast.success(t('equipamentos.fichaAtualizadaSucesso'))
       setManualEdit(false)
     } catch (e) {
-      toast.error(e.message || 'Não foi possível actualizar a Ficha Técnica.')
+      toast.error(e.message || t('equipamentos.erroAtualizarFicha'))
     } finally {
       setManualSaving(false)
     }
   }
 
   const handleEliminar = async (eq) => {
-    const confirmar = window.confirm(`Eliminar o equipamento "${eq.nome}"?`)
+    const confirmar = window.confirm(t('equipamentos.confirmarEliminar', { nome: eq.nome }))
     if (!confirmar) return
 
     setDeletingId(eq.id)
@@ -448,9 +521,9 @@ export default function Equipamentos() {
       setEquipamentos((prev) => prev.filter((item) => item.id !== eq.id))
       if (manualEquipamento?.id === eq.id) closeManual()
       if (editEquipamento?.id === eq.id) closeEdit()
-      toast.success(`Equipamento "${eq.nome}" eliminado com sucesso.`)
+      toast.success(t('equipamentos.eliminadoSucesso', { nome: eq.nome }))
     } catch (e) {
-      toast.error(e.message || 'Não foi possível eliminar o equipamento.')
+      toast.error(e.message || t('equipamentos.erroEliminar'))
     } finally {
       setDeletingId(null)
     }
@@ -470,24 +543,36 @@ export default function Equipamentos() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-      toast.success('PDF exportado com sucesso.')
+      toast.success(t('equipamentos.pdfExportado'))
     } catch (e) {
-      toast.error(e.message || 'Não foi possível exportar o PDF.')
+      toast.error(e.message || t('equipamentos.erroPdf'))
     }
   }
 
-  const renderRow = (eq) => (
-    <tr key={eq.id}>
+  const renderRow = (eq) => {
+    const estaAvariado = normalizarEstadoEquipamento(eq.estado_atual) === 'Avariado'
+    return (
+    <tr key={eq.id} className={estaAvariado ? styles.rowAvariado : undefined}>
       <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(eq.id).padStart(3, '0')}</td>
       <td>
-        <strong className={styles.rowName}>{eq.nome}</strong>
+        <strong className={styles.rowName}>
+          {estaAvariado && (
+            <span className={styles.rowAvariadoIcon} title={t('equipamentos.equipamentoAvariado')}>⚠</span>
+          )}
+          {eq.nome}
+        </strong>
       </td>
       <td className="mono" style={{ color: 'var(--text-dim)', fontSize: 12 }}>{eq.codigo || '-'}</td>
-      <td style={{ color: 'var(--text-secondary)' }}>{eq.tipo}</td>
+      {mostrarColunaTipo && <td style={{ color: 'var(--text-secondary)' }}>{eq.tipo}</td>}
+      <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+        {(eq.temp_min != null && eq.temp_max != null)
+          ? `${eq.temp_min} → ${eq.temp_max} °C`
+          : '—'}
+      </td>
       <td style={{ color: 'var(--text-secondary)' }}>{eq.localizacao}</td>
       <td><StatusBadge estado={eq.estado_atual} /></td>
       <td className="mono" style={{ color: 'var(--text-dim)', fontSize: 11 }}>
-        {eq.criado_em ? new Date(eq.criado_em).toLocaleDateString('pt-PT') : '—'}
+        {eq.criado_em ? new Date(eq.criado_em).toLocaleDateString(locale) : '—'}
       </td>
       <td>
         <div className={styles.rowActions}>
@@ -497,14 +582,14 @@ export default function Equipamentos() {
             onClick={() => navigate(`/equipamentos/${eq.id}`)}
           >
             <Play size={18} />
-            Iniciar Check-in
+            {t('equipamentos.botaoAbrir')}
           </button>
           <button
             type="button"
             className={styles.manualIcon}
             onClick={() => openManual(eq)}
-            aria-label="Consultar Manual Técnico"
-            title="Consultar Manual Técnico"
+            aria-label={t('equipamentos.consultarManual')}
+            title={t('equipamentos.consultarManual')}
           >
             <BookOpen size={16} strokeWidth={2} />
           </button>
@@ -512,8 +597,8 @@ export default function Equipamentos() {
             type="button"
             className={styles.btnEdit}
             onClick={() => openEdit(eq)}
-            aria-label={`Editar ${eq.nome}`}
-            title="Editar"
+            aria-label={t('equipamentos.editarNome', { nome: eq.nome })}
+            title={t('common.edit')}
           >
             <Pencil size={14} strokeWidth={2} />
           </button>
@@ -522,8 +607,10 @@ export default function Equipamentos() {
             className={styles.btnDelete}
             onClick={() => handleEliminar(eq)}
             disabled={deletingId === eq.id}
-            aria-label={deletingId === eq.id ? `A eliminar ${eq.nome}` : `Eliminar ${eq.nome}`}
-            title={deletingId === eq.id ? 'A eliminar...' : 'Eliminar'}
+            aria-label={deletingId === eq.id
+              ? t('equipamentos.aEliminarNome', { nome: eq.nome })
+              : t('equipamentos.eliminarNome', { nome: eq.nome })}
+            title={deletingId === eq.id ? t('equipamentos.aGuardar') : t('common.delete')}
           >
             <Trash2 size={14} strokeWidth={2} />
           </button>
@@ -531,13 +618,14 @@ export default function Equipamentos() {
       </td>
     </tr>
   )
+  }
 
   return (
     <div className="fade-up">
       <div className={styles.header}>
         <div>
-          <div className="label">Gestão</div>
-          <h1 className={styles.title}>Equipamentos</h1>
+          <div className="label">{t('equipamentos.gestao')}</div>
+          <h1 className={styles.title}>{t('equipamentos.title')}</h1>
         </div>
         <button
           onClick={openCreate}
@@ -545,14 +633,28 @@ export default function Equipamentos() {
           className={styles.addEquipmentBtn}
         >
           <Plus strokeWidth={2.5} />
-          Novo Equipamento
+          {t('equipamentos.novoEquipamento')}
         </button>
+      </div>
+
+      <div className={styles.categoryTabs}>
+        {CATEGORIAS.filter((cat) => cat.tipos === null || contagensPorCategoria[cat.id] > 0).map((cat) => (
+          <button
+            key={cat.id}
+            type="button"
+            className={`${styles.categoryChip} ${filtroCategoria === cat.id ? styles.categoryChipActive : ''}`}
+            onClick={() => setFiltroCategoria(cat.id)}
+          >
+            {cat.icone} {t(cat.labelKey)}
+            <span className={styles.categoryChipCount}>{contagensPorCategoria[cat.id]}</span>
+          </button>
+        ))}
       </div>
 
       <div className={styles.filters}>
         <input
           className={styles.search}
-          placeholder="Pesquisar por nome, tipo ou localização..."
+          placeholder={t('equipamentos.pesquisarPlaceholder')}
           value={filtro}
           onChange={(e) => setFiltro(e.target.value)}
         />
@@ -561,8 +663,8 @@ export default function Equipamentos() {
           value={filtroEstado}
           onChange={(e) => setFiltroEstado(e.target.value)}
         >
-          <option value="Todos">Todos os estados</option>
-          {ESTADOS_UI.map((estado) => <option key={estado} value={estado}>{estado}</option>)}
+          <option value="Todos">{t('common.allStatus')}</option>
+          {ESTADOS_UI.map((e) => <option key={e.value} value={e.value}>{t(e.labelKey)}</option>)}
         </select>
         <button
           className={styles.btnExport}
@@ -570,60 +672,137 @@ export default function Equipamentos() {
           disabled={filtrados.length === 0}
           type="button"
         >
-          Exportar PDF
+          {t('equipamentos.exportarPdf')}
         </button>
       </div>
 
-      {loading && <div className={styles.empty}>A carregar...</div>}
-      {erro && <div className={styles.erro}>Erro ao carregar: {erro}</div>}
+      {loading && <div className={styles.empty}>{t('common.loading')}</div>}
+      {erro && <div className={styles.erro}>{t('equipamentos.erroCarregar', { msg: erro })}</div>}
 
       {!loading && !erro && (
         <>
           <div className={styles.count} style={{ marginBottom: 12 }}>
-            <span className="mono">{filtrados.length}</span>
-            <span style={{ color: 'var(--text-dim)' }}> equipamento{filtrados.length !== 1 ? 's' : ''}</span>
+            <span>{t('equipamentos.contadorEquipamentos', { count: filtradosPorCategoria.length })}</span>
           </div>
+
+          {filtroCategoria === 'Todos' && (
+            <div className={styles.collapseControls}>
+              <button
+                type="button"
+                className={styles.btnCollapseAll}
+                onClick={todasExpandidas ? recolherTodas : expandirTodas}
+              >
+                {todasExpandidas ? t('equipamentos.recolherTudo') : t('equipamentos.expandirTudo')}
+              </button>
+            </div>
+          )}
 
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>Nome</th>
-                  <th>CÓD. INTERNO</th>
-                  <th>Tipo</th>
-                  <th>Localização</th>
-                  <th>Estado</th>
-                  <th>Registado</th>
+                  <th>{t('common.name')}</th>
+                  <th>{t('equipamentos.cabecalhoCod')}</th>
+                  {mostrarColunaTipo && <th>{t('common.type')}</th>}
+                  <th>{t('equipamentos.cabecalhoTemp')}</th>
+                  <th>{t('common.location')}</th>
+                  <th>{t('common.status')}</th>
+                  <th>{t('equipamentos.cabecalhoRegistado')}</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
-                {filtrados.map(renderRow)}
-                {filtrados.length === 0 && (
+                {filtroCategoria === 'Todos' ? (
+                  CATEGORIAS.filter((cat) => cat.id !== 'Todos').map((cat) => {
+                    const equipsDaCategoria = filtradosPorCategoria.filter((eq) =>
+                      (cat.tipos ?? []).includes(eq.tipo)
+                    )
+                    if (equipsDaCategoria.length === 0) return null
+
+                    const estaColapsada = colapsadas.has(cat.id)
+
+                    const contagens = {
+                      Disponível: equipsDaCategoria.filter((eq) =>
+                        normalizarEstadoEquipamento(eq.estado_atual) === 'Disponível').length,
+                      Avariado: equipsDaCategoria.filter((eq) =>
+                        normalizarEstadoEquipamento(eq.estado_atual) === 'Avariado').length,
+                      Ocupado: equipsDaCategoria.filter((eq) =>
+                        normalizarEstadoEquipamento(eq.estado_atual) === 'Ocupado').length,
+                    }
+
+                    return (
+                      <React.Fragment key={cat.id}>
+                        <tr
+                          className={styles.categoryHeaderRow}
+                          onClick={() => toggleCategoria(cat.id)}
+                        >
+                          <td colSpan={mostrarColunaTipo ? 9 : 8}>
+                            <div className={styles.categoryHeaderContent}>
+                              <div className={styles.categoryHeaderLeft}>
+                                <span className={`${styles.categoryChevron} ${estaColapsada ? styles.categoryChevronCollapsed : ''}`}>
+                                  ›
+                                </span>
+                                <span className={styles.categoryHeaderIcon}>{cat.icone}</span>
+                                <span className={styles.categoryHeaderLabel}>{t(cat.labelKey)}</span>
+                                <span className={styles.categoryHeaderCount}>
+                                  ({equipsDaCategoria.length})
+                                </span>
+                              </div>
+                              <div className={styles.categoryHeaderBadges}>
+                                {contagens.Disponível > 0 && (
+                                  <span className={`${styles.miniStateBadge} ${styles.miniStateBadgeOk}`}>
+                                    ● {t('equipamentos.statusDisponivel', { count: contagens.Disponível })}
+                                  </span>
+                                )}
+                                {contagens.Ocupado > 0 && (
+                                  <span className={`${styles.miniStateBadge} ${styles.miniStateBadgeOcupado}`}>
+                                    ● {t('equipamentos.statusOcupado', { count: contagens.Ocupado })}
+                                  </span>
+                                )}
+                                {contagens.Avariado > 0 && (
+                                  <span className={`${styles.miniStateBadge} ${styles.miniStateBadgeNok}`}>
+                                    ● {t('equipamentos.statusAvariado', { count: contagens.Avariado })}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                        {!estaColapsada && equipsDaCategoria.map(renderRow)}
+                      </React.Fragment>
+                    )
+                  })
+                ) : (
+                  filtradosPorCategoria.map(renderRow)
+                )}
+                {filtradosPorCategoria.length === 0 && (
                   <tr>
-                    <td colSpan={8} className={styles.emptyCell}>
+                    <td colSpan={mostrarColunaTipo ? 9 : 8} className={styles.emptyCell}>
                       <EmptyState
                         icon="◎"
                         variant="neutral"
                         title={
                           equipamentos.length === 0
-                            ? 'Ainda não existem equipamentos registados.'
-                            : 'Nenhum resultado para os filtros atuais.'
+                            ? t('equipamentos.semEquipamentos')
+                            : t('equipamentos.semResultados')
                         }
                         subtitle={
                           equipamentos.length === 0
-                            ? 'Comece por adicionar o primeiro equipamento.'
-                            : 'Tente outra pesquisa ou limpe os filtros.'
+                            ? t('equipamentos.semEquipamentosSub')
+                            : t('equipamentos.semResultadosSub')
                         }
                         buttonText={
-                          equipamentos.length === 0 ? '+ Adicionar Equipamento' : 'Limpar filtros'
+                          equipamentos.length === 0
+                            ? t('equipamentos.adicionarEquipamento')
+                            : t('equipamentos.limparFiltros')
                         }
                         onButtonClick={() => {
                           if (equipamentos.length === 0) openCreate()
                           else {
                             setFiltro('')
                             setFiltroEstado('Todos')
+                            setFiltroCategoria('Todos')
                           }
                         }}
                       />
@@ -640,14 +819,14 @@ export default function Equipamentos() {
         <div className={styles.overlay} onClick={closeCreate}>
           <div className={`${styles.modal} ${styles.modalWide}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
-              <div className="label">Equipamento</div>
-              <h2 className={styles.modalTitle}>Novo Equipamento</h2>
+              <div className="label">{t('equipamentos.modalCriarLabel')}</div>
+              <h2 className={styles.modalTitle}>{t('equipamentos.novoEquipamento')}</h2>
             </div>
 
             <div className={styles.fields}>
               <div className={styles.formGrid}>
                 <label className={styles.field}>
-                  <span className="label">Nome do Equipamento *</span>
+                  <span className="label">{t('equipamentos.campoNome')}</span>
                   <input
                     className={`${styles.input} ${showCreateError('nome') ? styles.inputError : ''} ${showCreateValid('nome') ? styles.inputValid : ''}`}
                     value={createForm.nome}
@@ -659,7 +838,7 @@ export default function Equipamentos() {
                 </label>
 
                 <label className={styles.field}>
-                  <span className="label">Código Interno *</span>
+                  <span className="label">{t('equipamentos.campoCodigo')}</span>
                   <input
                     className={`${styles.input} ${showCreateError('codigo_interno') ? styles.inputError : ''} ${showCreateValid('codigo_interno') ? styles.inputValid : ''}`}
                     value={createForm.codigo_interno}
@@ -671,21 +850,21 @@ export default function Equipamentos() {
                 </label>
 
                 <label className={styles.field}>
-                  <span className="label">Tipo *</span>
+                  <span className="label">{t('equipamentos.campoTipo')}</span>
                   <select
                     className={`${styles.input} ${showCreateError('tipo') ? styles.inputError : ''} ${showCreateValid('tipo') ? styles.inputValid : ''}`}
                     value={createForm.tipo}
                     onChange={(e) => updateCreateField('tipo', e.target.value)}
                     onBlur={() => markCreateTouched('tipo')}
                   >
-                    <option value="">Selecionar tipo...</option>
+                    <option value="">{t('equipamentos.selecionarTipo')}</option>
                     {TIPOS.map((tipo) => <option key={tipo} value={tipo}>{tipo}</option>)}
                   </select>
                   {showCreateError('tipo') && <span className={styles.fieldHintError}>{createFieldErrors.tipo}</span>}
                 </label>
 
                 <label className={styles.field}>
-                  <span className="label">Localização *</span>
+                  <span className="label">{t('equipamentos.campoLocalizacao')}</span>
                   <input
                     className={`${styles.input} ${showCreateError('localizacao') ? styles.inputError : ''} ${showCreateValid('localizacao') ? styles.inputValid : ''}`}
                     value={createForm.localizacao}
@@ -698,7 +877,7 @@ export default function Equipamentos() {
               </div>
 
               <div className={styles.sectionDivider}>
-                <span>Ficha Técnica</span>
+                <span>{t('equipamentos.fichaLabel')}</span>
               </div>
 
               <div className={styles.techGrid}>
@@ -744,29 +923,29 @@ export default function Equipamentos() {
               </div>
 
               <label className={styles.field}>
-                <span className="label">Estado Inicial</span>
+                <span className="label">{t('equipamentos.estadoInicial')}</span>
                 <select
                   className={styles.input}
                   value={createForm.estado_atual}
                   onChange={(e) => updateCreateField('estado_atual', e.target.value)}
                 >
-                  {ESTADOS_UI.map((estado) => <option key={estado} value={estado}>{estado}</option>)}
+                  {ESTADOS_UI.map((e) => <option key={e.value} value={e.value}>{t(e.labelKey)}</option>)}
                 </select>
               </label>
             </div>
 
             <div className={styles.requiredProgress}>
-              Campos obrigatórios preenchidos: <strong>{createRequiredDone}/{createRequiredTotal}</strong>
+              {t('equipamentos.camposObrigatoriosProgresso')}<strong>{createRequiredDone}/{createRequiredTotal}</strong>
             </div>
 
             {createErro && <div className={styles.formErro}>{createErro}</div>}
 
             <div className={styles.modalActions}>
               <button className={styles.btnSecondary} onClick={closeCreate} type="button">
-                Cancelar
+                {t('common.cancel')}
               </button>
               <button className={styles.btnPrimary} onClick={handleSubmit} disabled={createSaving || createHasErrors} type="button">
-                {createSaving ? 'A guardar...' : 'Criar Equipamento'}
+                {createSaving ? t('equipamentos.aGuardar') : t('equipamentos.criarEquipamento')}
               </button>
             </div>
           </div>
@@ -778,7 +957,7 @@ export default function Equipamentos() {
         <div className={styles.overlay} onClick={closeManual}>
           <div className={`${styles.modal} ${styles.modalWide}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
-              <div className="label">Ficha Técnica</div>
+              <div className="label">{t('equipamentos.fichaLabel')}</div>
               <h2 className={styles.modalTitle}>{manualEquipamento.nome}</h2>
               <p className={styles.modalSubtitle}>
                 {manualEquipamento.codigo} · {manualEquipamento.tipo} · {manualEquipamento.localizacao}
@@ -787,15 +966,15 @@ export default function Equipamentos() {
 
             <div className={styles.manualSummary}>
               <div>
-                <span className={styles.manualLabel}>Estado</span>
+                <span className={styles.manualLabel}>{t('equipamentos.estadoLabel')}</span>
                 <StatusBadge estado={manualEquipamento.estado_atual} />
               </div>
               <div>
-                <span className={styles.manualLabel}>Registado em</span>
-                <strong>{manualEquipamento.criado_em ? new Date(manualEquipamento.criado_em).toLocaleDateString('pt-PT') : '—'}</strong>
+                <span className={styles.manualLabel}>{t('equipamentos.registadoEm')}</span>
+                <strong>{manualEquipamento.criado_em ? new Date(manualEquipamento.criado_em).toLocaleDateString(locale) : '—'}</strong>
               </div>
               <div>
-                <span className={styles.manualLabel}>Temperatura (min → max)</span>
+                <span className={styles.manualLabel}>{t('equipamentos.temperaturaRange')}</span>
                 <strong>{`${manualEquipamento.temp_min ?? '—'} °C ❄️  → ${manualEquipamento.temp_max ?? '—'} °C 🔥`}</strong>
               </div>
             </div>
@@ -820,7 +999,7 @@ export default function Equipamentos() {
 
               {manualEdit && manualForm && (
                 <section className={styles.manualSection}>
-                  <div className={styles.manualSectionTitle}>Ficha Técnica (Edição)</div>
+                  <div className={styles.manualSectionTitle}>{t('equipamentos.fichaEdicao')}</div>
                   <div className={styles.manualGrid}>
                     {MANUAL_EDIT_FIELDS.map((field) => (
                       field.textField ? (
@@ -843,7 +1022,7 @@ export default function Equipamentos() {
                       )
                     ))}
                     <label className={styles.field} style={{ gridColumn: '1 / -1' }}>
-                      <span className="label">Ligação Eléctrica</span>
+                      <span className="label">{t('equipamentos.ligacaoEletrica')}</span>
                       <input
                         className={styles.input}
                         value={manualForm.ligacao_eletrica}
@@ -860,10 +1039,10 @@ export default function Equipamentos() {
               {!manualEdit && (
                 <>
                   <button className={styles.btnSecondary} onClick={closeManual} type="button">
-                    Fechar
+                    {t('common.close')}
                   </button>
                   <button className={styles.btnManual} onClick={() => setManualEdit(true)} type="button">
-                    Editar Ficha
+                    {t('equipamentos.editarFicha')}
                   </button>
                 </>
               )}
@@ -888,10 +1067,10 @@ export default function Equipamentos() {
                     potencia_kw: manualEquipamento.potencia_kw ?? '',
                     ligacao_eletrica: manualEquipamento.ligacao_eletrica || '',
                   }) }} type="button">
-                    Cancelar
+                    {t('common.cancel')}
                   </button>
                   <button className={styles.btnPrimary} onClick={saveManual} disabled={manualSaving} type="button">
-                    {manualSaving ? 'A guardar...' : 'Guardar Ficha'}
+                    {manualSaving ? t('equipamentos.aGuardar') : t('equipamentos.guardarFicha')}
                   </button>
                 </>
               )}
@@ -905,17 +1084,17 @@ export default function Equipamentos() {
         <div className={styles.overlay} onClick={closeEdit}>
           <div className={`${styles.modal} ${styles.modalWide}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
-              <div className="label">Editar Equipamento</div>
+              <div className="label">{t('equipamentos.editarEquipamento')}</div>
               <h2 className={styles.modalTitle}>{editEquipamento.nome}</h2>
               <p className={styles.modalSubtitle}>
-                Actualiza apenas os campos necessários para manter o registo limpo e auditável.
+                {t('equipamentos.editarSubtitulo')}
               </p>
             </div>
 
             <div className={styles.fields}>
               <div className={styles.formGrid}>
                 <label className={styles.field}>
-                  <span className="label">Nome *</span>
+                  <span className="label">{t('equipamentos.campoNomeEdit')}</span>
                   <input
                     className={`${styles.input} ${showEditError('nome') ? styles.inputError : ''} ${showEditValid('nome') ? styles.inputValid : ''}`}
                     value={editForm.nome}
@@ -926,7 +1105,7 @@ export default function Equipamentos() {
                 </label>
 
                 <label className={styles.field}>
-                  <span className="label">Código Interno</span>
+                  <span className="label">{t('equipamentos.campoCodigoEdit')}</span>
                   <input
                     className={styles.input}
                     value={editForm.codigo}
@@ -936,21 +1115,21 @@ export default function Equipamentos() {
                 </label>
 
                 <label className={styles.field}>
-                  <span className="label">Tipo *</span>
+                  <span className="label">{t('equipamentos.campoTipo')}</span>
                   <select
                     className={`${styles.input} ${showEditError('tipo') ? styles.inputError : ''} ${showEditValid('tipo') ? styles.inputValid : ''}`}
                     value={editForm.tipo}
                     onChange={(e) => updateEditField('tipo', e.target.value)}
                     onBlur={() => markEditTouched('tipo')}
                   >
-                    <option value="">Selecionar tipo...</option>
+                    <option value="">{t('equipamentos.selecionarTipo')}</option>
                     {TIPOS.map((tipo) => <option key={tipo} value={tipo}>{tipo}</option>)}
                   </select>
                   {showEditError('tipo') && <span className={styles.fieldHintError}>{editFieldErrors.tipo}</span>}
                 </label>
 
                 <label className={styles.field}>
-                  <span className="label">Localização *</span>
+                  <span className="label">{t('equipamentos.campoLocalizacao')}</span>
                   <input
                     className={`${styles.input} ${showEditError('localizacao') ? styles.inputError : ''} ${showEditValid('localizacao') ? styles.inputValid : ''}`}
                     value={editForm.localizacao}
@@ -959,15 +1138,15 @@ export default function Equipamentos() {
                   />
                   {showEditError('localizacao') && <span className={styles.fieldHintError}>{editFieldErrors.localizacao}</span>}
                 </label>
-                
+
                 <label className={styles.field}>
-                  <span className="label">Estado</span>
+                  <span className="label">{t('equipamentos.estadoLabel')}</span>
                   <select
                     className={styles.input}
                     value={editForm.estado_atual}
                     onChange={(e) => updateEditField('estado_atual', e.target.value)}
                   >
-                    {ESTADOS_UI.map((estado) => <option key={estado} value={estado}>{estado}</option>)}
+                    {ESTADOS_UI.map((e) => <option key={e.value} value={e.value}>{t(e.labelKey)}</option>)}
                   </select>
                 </label>
               </div>
@@ -980,7 +1159,7 @@ export default function Equipamentos() {
             {editForm.estado_atual === 'Avariado' && (
               <div style={{ marginTop: 12 }}>
                 <label className={styles.field} style={{ gridColumn: '1 / -1' }}>
-                  <span className="label">Descrição da Avaria (opcional)</span>
+                  <span className="label">{t('equipamentos.descricaoAvaria')}</span>
                   <textarea
                     className={styles.textarea}
                     value={editForm.descricao_avaria}
@@ -994,10 +1173,10 @@ export default function Equipamentos() {
 
             <div className={styles.modalActions}>
               <button className={styles.btnSecondary} onClick={closeEdit} type="button">
-                Cancelar
+                {t('common.cancel')}
               </button>
               <button className={styles.btnPrimary} onClick={handleEditar} disabled={editSaving || editHasErrors} type="button">
-                {editSaving ? 'A guardar...' : 'Guardar Alterações'}
+                {editSaving ? t('equipamentos.aGuardar') : t('equipamentos.guardarAlteracoes')}
               </button>
             </div>
           </div>

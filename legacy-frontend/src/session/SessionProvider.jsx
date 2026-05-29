@@ -1,3 +1,15 @@
+/**
+ * @deprecated LEGADO — NÃO UTILIZADO EM PRODUÇÃO
+ *
+ * Este provider implementa um sistema de sessão alternativo baseado em
+ * seleção de utilizador por lista + expiração de 8h em localStorage.
+ *
+ * O sistema de autenticação ativo é o AuthContext (JWT + PIN).
+ * Este ficheiro NÃO está montado em main.jsx nem em App.jsx.
+ *
+ * Manter até decisão de remoção definitiva ou integração num fluxo
+ * específico (ex: modo quiosque sem PIN).
+ */
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { api } from '../api/index.js'
 import { useToast } from '../components/ToastProvider.jsx'

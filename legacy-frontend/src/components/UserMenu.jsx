@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { UserCircle2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext.jsx'
+import { useLanguage } from '../contexts/useLanguage.js'
 import styles from './UserMenu.module.css'
 
 export default function UserMenu() {
   const { user, logout, bootstrapAvailable, openBootstrapPrompt } = useAuth()
+  const { t } = useLanguage()
   const [open, setOpen] = useState(false)
 
   if (!user) return null
@@ -31,7 +33,7 @@ export default function UserMenu() {
 
       {open && (
         <div className={styles.dropdown}>
-          <div className={styles.meta}>Sessão ativa</div>
+          <div className={styles.meta}>{t('userMenu.activeSession')}</div>
           <button
             className={styles.action}
             onClick={async () => {
@@ -39,7 +41,7 @@ export default function UserMenu() {
               await logout()
             }}
           >
-            Mudar utilizador
+            {t('userMenu.switchUser')}
           </button>
           {bootstrapAvailable && user.role !== 'admin' && (
             <button
@@ -49,7 +51,7 @@ export default function UserMenu() {
                 openBootstrapPrompt()
               }}
             >
-              Criar administrador inicial
+              {t('userMenu.createAdmin')}
             </button>
           )}
         </div>

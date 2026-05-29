@@ -412,6 +412,27 @@
   transition: transform var(--transition), opacity var(--transition), border-color var(--transition), color var(--transition), background var(--transition);
 }
 
+.tableBtnEnd {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 11px;
+  background: var(--bg-hover);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: transform var(--transition), opacity var(--transition), border-color var(--transition), color var(--transition), background var(--transition);
+}
+
+.tableBtnEnd:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--amber-dim);
+  background: var(--amber-glow);
+  color: var(--text-primary);
+}
+
 .tableBtnEdit {
   background: var(--amber-glow);
   border-color: var(--amber-dim);
@@ -436,6 +457,7 @@
   color: #fff;
 }
 
+.tableBtnEnd:disabled,
 .tableBtnEdit:disabled,
 .tableBtnDelete:disabled {
   opacity: 0.45;
@@ -612,3 +634,75 @@
 
   .modal { width: 95vw; padding: 18px; }
 }
+
+.grupoHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  margin-top: 16px;
+}
+
+.grupoHeaderAtivo {
+  color: var(--text-primary);
+  background: var(--amber-glow, rgba(245,158,11,0.08));
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.pulseDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  animation: pulse 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.3; transform: scale(0.65); }
+}
+
+.badgeAtivo {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: rgba(16,185,129,0.12);
+  color: #10b981;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+.badgePlaneada {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.btnHistorico {
+  display: block;
+  margin: 12px auto 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  text-decoration: underline;
+  padding: 4px 8px;
+}
+.btnHistorico:hover { color: var(--text-secondary); }

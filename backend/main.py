@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import hmac
 import logging
@@ -7,9 +8,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, TypeVar
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import io
+
+from xhtml2pdf import pisa
+from playwright.sync_api import sync_playwright
 from pydantic import BaseModel, model_validator
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select, delete
@@ -27,14 +32,31 @@ from models import (
     RoleUtilizador,
     SessaoAuth,
     SessaoUso,
+    SeveridadeAvaria,
     TipoDocumento,
     Utilizador,
     normalizar_estado_equipamento,
 )
-from collections import defaultdict
+from collections import defaultdict, deque
 
 logger = logging.getLogger(__name__)
 ModeloT = TypeVar("ModeloT")
+
+# Logo INDUSTRIAL TESTING LAB em base64 — embutido no HTML dos PDFs para que o Playwright
+# não precise de resolver caminhos de ficheiro durante a renderização.
+_LOGO_BASE64: str = ""
+try:
+    _logo_path = os.path.join(os.path.dirname(__file__), "..", "legacy-frontend", "src", "assets", "industrial-testing-lab-logo.png")
+    with open(_logo_path, "rb") as _f:
+        _LOGO_BASE64 = base64.b64encode(_f.read()).decode("ascii")
+except FileNotFoundError:
+    logger.warning("Logo INDUSTRIAL TESTING LAB não encontrado em %s — PDFs usarão texto.", _logo_path)
+
+_LOGO_HTML: str = (
+    f'<img src="data:image/png;base64,{_LOGO_BASE64}" alt="INDUSTRIAL TESTING LAB" class="logo-img"/>'
+    if _LOGO_BASE64
+    else '<div class="logo-fallback">INDUSTRIAL TESTING LAB</div>'
+)
 
 # Garante as colunas novas de SessoesUso na primeira chamada ao check-in,
 # sem depender de reinício do servidor (migração lazy).
@@ -65,6 +87,19 @@ def _garantir_colunas_sessaouso() -> None:
         logger.warning("Não foi possível garantir colunas SessoesUso — migração será re-tentada na próxima chamada.")
 
 def _garantir_colunas_avarias() -> None:
+    """Garante que todas as colunas do modelo Avaria existem na base de dados.
+
+    Porquê: a função usa migração lazy (executada na primeira chamada ao endpoint
+    de avarias) em vez de ALTER TABLE no arranque do servidor. Esta abordagem evita
+    falhas de inicialização quando a base de dados está em modo só-leitura ou
+    partilhada, e é segura para múltiplas instâncias do servidor em simultâneo
+    porque _garantir_coluna_mssql verifica a existência antes de executar o ALTER.
+
+    Inclui a coluna 'severidade' necessária para o Modo Limitado: sem ela, o
+    servidor arrancaria mas a primeira escrita de avaria falharia com erro SQL.
+    O DEFAULT 'BLOQUEANTE' garante que registos legados mantêm comportamento
+    conservador sem necessidade de um UPDATE separado — operação atómica no SQLite.
+    """
     global _avarias_migrada
     if _avarias_migrada:
         return
@@ -72,12 +107,23 @@ def _garantir_colunas_avarias() -> None:
         tipo_float = "FLOAT" if IS_MSSQL else "REAL"
         tipo_texto_150 = "NVARCHAR(150)" if IS_MSSQL else "VARCHAR(150)"
         tipo_texto_100 = "NVARCHAR(100)" if IS_MSSQL else "VARCHAR(100)"
+        # Coluna de severidade para o Modo Limitado (VARCHAR(20) com DEFAULT BLOQUEANTE)
+        tipo_texto_20 = "NVARCHAR(20)" if IS_MSSQL else "VARCHAR(20)"
         with engine.begin() as conn:
             _garantir_coluna_mssql(conn, "Avarias", "custo_reparacao", f"{tipo_float} NULL")
             _garantir_coluna_mssql(conn, "Avarias", "empresa_externa", f"{tipo_texto_150} NULL")
             _garantir_coluna_mssql(conn, "Avarias", "num_sc_po", f"{tipo_texto_100} NULL")
+            # Porquê NOT NULL DEFAULT: o SQLite permite ADD COLUMN NOT NULL apenas quando
+            # um DEFAULT é fornecido — aplica o valor conservador a todos os registos
+            # existentes de forma atómica, sem bloquear leituras concorrentes.
+            _garantir_coluna_mssql(
+                conn,
+                "Avarias",
+                "severidade",
+                f"{tipo_texto_20} NOT NULL DEFAULT '{SeveridadeAvaria.BLOQUEANTE.value}'",
+            )
         _avarias_migrada = True
-        logger.info("Colunas Avarias (custo_reparacao, empresa_externa, num_sc_po) garantidas.")
+        logger.info("Colunas Avarias (custo_reparacao, empresa_externa, num_sc_po, severidade) garantidas.")
     except Exception:
         logger.warning("Não foi possível garantir colunas Avarias — migração será re-tentada.")
 
@@ -192,6 +238,132 @@ def _gerar_pdf_texto(titulo: str, linhas: list[str]) -> bytes:
     return bytes(pdf)
 
 
+def _gerar_pdf_playwright(html: str) -> bytes:
+    """Renderiza HTML para PDF via Chromium headless (Playwright).
+
+    Suporta CSS moderno completo: flex, nth-child, background em <tr>, etc.
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.set_content(html, wait_until="networkidle")
+            pdf_bytes = page.pdf(
+                format="A4",
+                landscape=True,
+                margin={"top": "15mm", "right": "12mm", "bottom": "18mm", "left": "12mm"},
+                print_background=True,
+            )
+        finally:
+            # Garantido mesmo em caso de excepção — evita fuga de processo Chromium
+            browser.close()
+    return pdf_bytes
+
+
+_CSS_RELATORIO = """
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    @page { size: A4 landscape; margin: 15mm 12mm 18mm 12mm; }
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 9pt; color: #1e293b;
+           -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .header { display: flex; justify-content: space-between; align-items: flex-end;
+              border-bottom: 3px solid #dc2626; padding-bottom: 10px; margin-bottom: 14px; }
+    .logo-img { height: 38px; display: block; }
+    .logo-fallback { font-size: 24pt; font-weight: 900; color: #dc2626; line-height: 1; }
+    .subtitle { font-size: 8pt; color: #64748b; text-transform: uppercase; margin-top: 4px; }
+    .doc-title { font-size: 14pt; font-weight: 700; margin-top: 4px; }
+    .meta { font-size: 8pt; color: #64748b; text-align: right; line-height: 1.8; }
+    .kpis { display: flex; gap: 12px; margin-bottom: 16px; }
+    .kpi { flex: 1; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 10px 14px; }
+    .kpi-label { font-size: 7.5pt; color: #64748b; text-transform: uppercase; font-weight: 600; }
+    .kpi-value { font-size: 22pt; font-weight: 700; color: #0f172a; line-height: 1.2; margin: 4px 0; }
+    .kpi-sub { font-size: 7.5pt; color: #94a3b8; }
+    .section-label { font-size: 8pt; font-weight: 700; color: #475569; text-transform: uppercase;
+                     letter-spacing: 0.05em; margin-bottom: 8px; }
+    table.rel { width: 100%; border-collapse: collapse; }
+    table.rel thead tr { background-color: #1e293b; color: #ffffff; }
+    table.rel thead th { padding: 9px 8px; font-size: 8.5pt; font-weight: 600;
+                         text-align: left; white-space: nowrap; }
+    table.rel tbody tr:nth-child(even) { background-color: #f8fafc; }
+    table.rel tbody td { padding: 8px; font-size: 8.5pt; border-bottom: 1px solid #e2e8f0;
+                         vertical-align: middle; }
+    .mono { font-family: "Courier New", monospace; font-size: 8pt; }
+    .dim { color: #94a3b8; font-size: 7.5pt; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px;
+             font-size: 7.5pt; font-weight: 600; white-space: nowrap; }
+    .badge-green  { background: #dcfce7; color: #166534; }
+    .badge-red    { background: #fee2e2; color: #991b1b; }
+    .badge-blue   { background: #dbeafe; color: #1e40af; }
+    .badge-yellow { background: #fef9c3; color: #854d0e; }
+    .badge-purple { background: #ede9fe; color: #5b21b6; }
+    .badge-gray   { background: #f1f5f9; color: #334155; }
+    .footer { margin-top: 14px; font-size: 7pt; color: #94a3b8; text-align: center;
+              border-top: 1px solid #e2e8f0; padding-top: 6px; }
+"""
+
+
+def _html_relatorio(
+    titulo_doc: str,
+    subtitulo: str,
+    timestamp_fmt: str,
+    meta_extra: str,
+    kpis_html: str,
+    section_label: str,
+    cabecalhos: list[tuple[str, str]],
+    linhas_tabela: list[str],
+    colspan: int,
+) -> str:
+    """Constrói HTML completo para um relatório tabular compatível com Playwright.
+
+    Args:
+        titulo_doc: Título principal do documento.
+        subtitulo: Subtítulo (ex: filtros activos).
+        timestamp_fmt: Data/hora de geração formatada.
+        meta_extra: HTML adicional na coluna da direita do cabeçalho.
+        kpis_html: Bloco HTML de cards KPI (ou string vazia).
+        section_label: Rótulo da secção acima da tabela.
+        cabecalhos: Lista de (texto, largura em %) para cada coluna.
+        linhas_tabela: Lista de strings HTML para as linhas <tr>.
+        colspan: Número de colunas (para linha vazia).
+    """
+    ths = "".join(
+        f'<th style="width:{w};">{txt}</th>' for txt, w in cabecalhos
+    )
+    tbody = (
+        "".join(linhas_tabela)
+        if linhas_tabela
+        else f'<tr><td colspan="{colspan}" style="text-align:center;padding:20px;color:#94a3b8;">'
+             "Nenhum registo encontrado para os filtros aplicados.</td></tr>"
+    )
+    return f"""<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8"/>
+<style>{_CSS_RELATORIO}</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      {_LOGO_HTML}
+      <div class="subtitle">Testing Centre</div>
+      <div class="doc-title">{titulo_doc}</div>
+      {f'<div class="dim" style="margin-top:4px;">{subtitulo}</div>' if subtitulo else ''}
+    </div>
+    <div class="meta">
+      Gerado em: {timestamp_fmt} (UTC)<br/>
+      {meta_extra}
+    </div>
+  </div>
+  {kpis_html}
+  <div class="section-label">{section_label}</div>
+  <table class="rel">
+    <thead><tr>{ths}</tr></thead>
+    <tbody>{tbody}</tbody>
+  </table>
+  <div class="footer">Industrial Testing Lab — Documento de Circulação Interna — Confidencial</div>
+</body>
+</html>"""
+
+
 def _listar_reservas_enriquecidas(session: Session):
     """Obtém reservas com metadados de equipamento, utilizador e sessão real.
 
@@ -214,15 +386,24 @@ def _listar_reservas_enriquecidas(session: Session):
 
     equipamentos = session.exec(select(Equipamento).where(Equipamento.id.in_(equipamento_ids))).all()
     utilizadores = session.exec(select(Utilizador).where(Utilizador.id.in_(utilizador_ids))).all()
-    # Porque: buscamos apenas sessões vinculadas a reservas (reserva_id NOT NULL)
-    # para não criar ruído de sessões ad-hoc sem reserva associada.
     sessoes = session.exec(
         select(SessaoUso).where(SessaoUso.reserva_id.in_(reserva_ids))
     ).all()
 
+    # Sessões ad-hoc ativas (sem reserva_id) no mesmo conjunto de equipamentos —
+    # necessário para reservas cujo check-in foi feito sem ligar à reserva explicitamente.
+    sessoes_adhoc = session.exec(
+        select(SessaoUso).where(
+            SessaoUso.equipamento_id.in_(equipamento_ids),
+            SessaoUso.reserva_id.is_(None),
+            SessaoUso.fim.is_(None),
+        )
+    ).all()
+
     equipamentos_por_id = {e.id: e for e in equipamentos}
     utilizadores_por_id = {u.id: u for u in utilizadores}
-    # Última sessão por reserva (mais recente em caso de múltiplos check-ins)
+
+    # Última sessão vinculada por reserva (mais recente em caso de múltiplos check-ins)
     sessao_por_reserva: dict[int, SessaoUso] = {}
     for s in sessoes:
         if s.reserva_id is not None:
@@ -230,11 +411,26 @@ def _listar_reservas_enriquecidas(session: Session):
             if anterior is None or s.inicio > anterior.inicio:
                 sessao_por_reserva[s.reserva_id] = s
 
+    # Sessão ad-hoc ativa mais recente por equipamento
+    sessao_adhoc_por_equipamento: dict[int, SessaoUso] = {}
+    for s in sessoes_adhoc:
+        anterior = sessao_adhoc_por_equipamento.get(s.equipamento_id)
+        if anterior is None or s.inicio > anterior.inicio:
+            sessao_adhoc_por_equipamento[s.equipamento_id] = s
+
     resultado: list[dict[str, Any]] = []
     for r in reservas:
         eq = equipamentos_por_id.get(r.equipamento_id)
         ut = utilizadores_por_id.get(r.utilizador_id)
         sess = sessao_por_reserva.get(r.id)
+
+        # Se não há sessão vinculada (ou está fechada), tentar sessão ad-hoc ativa
+        # no mesmo equipamento cujo início caia dentro da janela da reserva.
+        if (sess is None or sess.fim is not None):
+            adhoc = sessao_adhoc_por_equipamento.get(r.equipamento_id)
+            if adhoc is not None and r.data_inicio <= adhoc.inicio <= r.data_fim:
+                sess = adhoc
+
         resultado.append(
             {
                 "id": r.id,
@@ -323,7 +519,10 @@ def _calcular_metricas_uso(
 # Configurável via variável de ambiente ACCESS_TOKEN_EXPIRE_MINUTES.
 TOKEN_TTL_MINUTOS: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "600"))
 PIN_INICIAL = "0000"
-_logs_auth: list[dict] = []
+# deque(maxlen=500): evicção automática O(1) quando o limite é atingido.
+# list com del[0] é O(n) — todos os elementos são deslocados em memória
+# a cada chamada de autenticação, ineficiente em ambiente de alta frequência.
+_logs_auth: deque[dict] = deque(maxlen=500)
 
 
 def _agora_utc() -> datetime:
@@ -404,6 +603,7 @@ def _registar_log(
     
     Porque: Permite auditoria em tempo real sem impacto em performance na base de dados.
     """
+    # deque(maxlen=500) ejeta automaticamente o registo mais antigo quando cheio
     _logs_auth.append({
         "timestamp": _iso_z(_agora_utc()),
         "acao": acao,
@@ -411,8 +611,6 @@ def _registar_log(
         "detalhe": detalhe,
         "utilizador_id": utilizador_id,
     })
-    if len(_logs_auth) > 500:
-        del _logs_auth[0]
 
 
 def _registar_log_bd(
@@ -447,6 +645,14 @@ def _registar_log_bd(
         session.flush()
     except SQLAlchemyError:
         logger.warning("Falha ao persistir log de auditoria para accao '%s'", acao)
+        # Porquê: um flush falhado deixa a sessão SQLAlchemy num estado inválido
+        # (rolled-back state). Se não fizermos rollback aqui, o próximo commit
+        # no endpoint que chamou esta função lança InvalidRequestError, transformando
+        # uma falha de log (não-crítica) numa falha de operação (crítica).
+        try:
+            session.rollback()
+        except Exception:
+            pass
 
 
 def _criar_sessao(utilizador: Utilizador, session: Session) -> dict[str, Any]:
@@ -532,17 +738,22 @@ def obter_utilizador_atual(
         # Verifica se a sessão expirou
         agora = _agora_utc()
         if sessao_auth.expira_em <= agora:
-            # Limpa a sessão expirada
+            # Porquê flush em vez de commit: esta dependência é invocada antes de
+            # qualquer lógica de endpoint. Um commit aqui confirmaria a deleção
+            # mas deixaria a sessão SQLAlchemy num estado que pode conflituar com
+            # o rollback do endpoint em caso de falha posterior. O flush propaga
+            # a deleção para a transacção activa sem a confirmar — a limpeza de
+            # sessões expiradas não é crítica e já é feita pelo lifespan no arranque.
             session.delete(sessao_auth)
-            session.commit()
+            session.flush()
             raise HTTPException(status_code=401, detail="Sessão expirada")
-        
+
         # Obtém o utilizador e valida ativação
         utilizador = session.get(Utilizador, sessao_auth.utilizador_id)
         if not utilizador or not utilizador.ativo:
-            # Invalida a sessão se o utilizador foi desativado
+            # Idem — flush em vez de commit pela mesma razão acima.
             session.delete(sessao_auth)
-            session.commit()
+            session.flush()
             raise HTTPException(status_code=401, detail="Utilizador inválido ou inativo")
         
         return utilizador
@@ -651,6 +862,24 @@ async def lifespan(app: FastAPI):
             s.commit()
     except Exception:
         logger.exception("Falha ao limpar sessões expiradas durante o arranque")
+    # Índice único filtrado: garante ao nível da BD que não pode existir mais do
+    # que uma sessão ativa (fim IS NULL) por equipamento em simultâneo.
+    # Porquê aqui e não no modelo SQLModel: o SQLite não suporta índices parciais
+    # via SQLModel/Alembic autogenerate — tem de ser criado via SQL direto.
+    # CREATE UNIQUE INDEX IF NOT EXISTS é idempotente — seguro em cada arranque.
+    # Este índice transforma a race condition do check-in duplo num IntegrityError
+    # que o endpoint trata devolvendo HTTP 409, em vez de dados duplicados silenciosos.
+    try:
+        from sqlalchemy import text
+        with Session(engine) as s:
+            s.exec(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_sessao_ativa_unica "
+                "ON SessoesUso (equipamento_id) WHERE fim IS NULL"
+            ))
+            s.commit()
+        logger.info("Índice de sessão ativa única garantido em SessoesUso.")
+    except Exception:
+        logger.warning("Não foi possível criar índice ix_sessao_ativa_unica — check-in duplo não está protegido ao nível da BD.")
     yield
 
 app = FastAPI(
@@ -693,11 +922,40 @@ class EstadoUpdate(BaseModel):
     novo_estado: str
 
 class AvariaCreate(BaseModel):
+    """Payload de entrada para registo de uma nova avaria.
+
+    Porquê: validar o campo 'severidade' aqui (camada Pydantic), antes de
+    qualquer acesso à base de dados, garante que valores inválidos são
+    rejeitados com HTTP 422 (Unprocessable Entity) — o código de estado
+    REST correto para erros de validação de input — sem consumir uma
+    transação de BD desnecessária.
+    """
+
     descricao: str
     utilizador_id: Optional[int] = None
     empresa_externa: Optional[str] = None
     custo_reparacao: Optional[float] = None
     num_sc_po: Optional[str] = None
+    # Default BLOQUEANTE: a omissão do campo pelo frontend nunca deve resultar
+    # num estado mais permissivo do que o esperado — princípio de falha segura.
+    severidade: str = SeveridadeAvaria.BLOQUEANTE.value
+
+    @model_validator(mode="after")
+    def validar_severidade(self) -> "AvariaCreate":
+        """Rejeita valores de severidade fora do enum SeveridadeAvaria.
+
+        Porquê: o modelo Avaria persiste 'severidade' como VARCHAR(20) sem
+        restrição CHECK na BD (SQLite não a suporta nativamente). A validação
+        aqui é a única barreira antes da escrita — sem ela, um valor inválido
+        entraria na BD silenciosamente e corromperia a máquina de estados.
+        """
+        valores_validos = {s.value for s in SeveridadeAvaria}
+        if self.severidade not in valores_validos:
+            raise ValueError(
+                f"Severidade inválida: '{self.severidade}'. "
+                f"Valores aceites: {sorted(valores_validos)}"
+            )
+        return self
 
 class AvariaResolve(BaseModel):
     relatorio_tecnico: Optional[str] = None
@@ -711,6 +969,7 @@ class ManutencaoCreate(BaseModel):
     executado_por_id: Optional[int] = None
     tipo_intervencao: Optional[str] = None
     custo_eur: Optional[float] = None
+    fornecedor: Optional[str] = None
     referencia_sc_po: Optional[str] = None
     observacoes_externas: Optional[str] = None
 
@@ -721,6 +980,8 @@ class CalibracaoCreate(BaseModel):
     certificado_url: Optional[str] = None
     observacoes: Optional[str] = None
     executado_por_id: Optional[int] = None
+    custo_eur: Optional[float] = None
+    fornecedor: Optional[str] = None
 
 class DocumentoCreate(BaseModel):
     titulo: str
@@ -917,6 +1178,10 @@ class EquipamentoUpdate(BaseModel):
     peso_max_kg: Optional[float] = None
     notas_tecnicas: Optional[str] = None
     foto_url: Optional[str] = None
+    # Limites térmicos e de humidade — editáveis via Ficha Técnica
+    temp_min: Optional[float] = None
+    temp_max: Optional[float] = None
+    humidade_max: Optional[float] = None
     # Permite alterar o estado via PATCH /equipamentos/{id}. Se for enviado
     # um estado igual a "Avariado" e ocorrer uma transição (antigo != novo),
     # o sistema criará automaticamente um registo de Avaria na mesma transacção.
@@ -930,7 +1195,10 @@ class EquipamentoCreate(BaseModel):
     localizacao: str
     codigo: str
     numero_serie: Optional[str] = None
-    range_temp: Optional[str] = None
+    # Limites térmicos — correspondem às colunas Float do modelo Equipamento
+    temp_min: Optional[float] = None
+    temp_max: Optional[float] = None
+    humidade_max: Optional[float] = None
     fabricante: Optional[str] = None
     modelo: Optional[str] = None
     ano_fabrico: Optional[int] = None
@@ -1388,58 +1656,324 @@ def detalhe_equipamento(equipamento_id: int, session: Session = Depends(get_sess
             session.rollback()
             logger.warning("Verificação de consistência ignorada (equipamento %s)", equipamento_id)
 
-    return eq
+    # Calcular data_proxima_calibracao a partir da calibração mais recente —
+    # o campo não existe na tabela de equipamentos: é derivado de Calibracao.proxima_data.
+    # Devolvemos sempre este campo para que o frontend não tenha de fazer uma
+    # segunda chamada só para obter a data de próxima calibração.
+    calibracao_mais_recente = session.exec(
+        select(Calibracao)
+        .where(Calibracao.equipamento_id == equipamento_id)
+        .order_by(Calibracao.data_realizada.desc())
+    ).first()
+    data_proxima_calibracao = (
+        calibracao_mais_recente.proxima_data if calibracao_mais_recente else None
+    )
+
+    return {
+        **eq.model_dump(),
+        "data_proxima_calibracao": _iso_z(data_proxima_calibracao) if data_proxima_calibracao else None,
+    }
 
 
-@app.get("/equipamentos/exportar/pdf", summary="Exportar equipamentos para PDF")
+@app.get("/equipamentos/exportar/pdf", summary="Exportar inventário de equipamentos para PDF formatado")
 def exportar_equipamentos_pdf(
     filtro: Optional[str] = None,
     estado: Optional[str] = None,
     session: Session = Depends(get_session),
 ):
-    equipamentos = session.exec(select(Equipamento)).all()
+    """Gera um PDF do inventário de equipamentos em formato tabular landscape.
 
-    filtro_normalizado = (filtro or "").strip().lower()
-    estado_normalizado = (estado or "").strip()
+    Aplica filtragem opcional por texto livre e por estado operacional antes
+    de serializar os registos num template HTML processado pelo xhtml2pdf.
+    Resolve mojibake declarando explicitamente UTF-8 no meta charset.
+    """
+    todos = session.exec(select(Equipamento)).all()
 
-    if filtro_normalizado:
-        equipamentos = [
-            eq for eq in equipamentos
-            if filtro_normalizado in (eq.nome or "").lower()
-            or filtro_normalizado in (eq.tipo or "").lower()
-            or filtro_normalizado in (eq.localizacao or "").lower()
+    filtro_norm = (filtro or "").strip().lower()
+    estado_norm = (estado or "").strip()
+
+    if filtro_norm:
+        todos = [
+            eq for eq in todos
+            if filtro_norm in (eq.nome or "").lower()
+            or filtro_norm in (eq.tipo or "").lower()
+            or filtro_norm in (eq.localizacao or "").lower()
+            or filtro_norm in (eq.codigo or "").lower()
         ]
 
-    if estado_normalizado:
-        equipamentos = [eq for eq in equipamentos if eq.estado_atual == estado_normalizado]
+    if estado_norm:
+        todos = [eq for eq in todos if eq.estado_atual == estado_norm]
 
-    equipamentos_ordenados = sorted(equipamentos, key=lambda eq: (eq.nome or "").lower())
+    ordenados = sorted(todos, key=lambda e: (e.nome or "").lower())
 
-    linhas = [
-        f"Total de equipamentos: {len(equipamentos_ordenados)}",
-        f"Gerado em: {_agora_utc().strftime('%d/%m/%Y %H:%M')} (UTC)",
-        "",
-    ]
+    # Mapeamento de estado → (cor de fundo do badge, cor do texto)
+    _CORES_ESTADO: dict[str, tuple[str, str]] = {
+        "Disponível":    ("#dcfce7", "#166534"),
+        "Ocupado":       ("#dbeafe", "#1e40af"),
+        "Avariado":      ("#fee2e2", "#991b1b"),
+        "Em manutenção": ("#fef9c3", "#854d0e"),
+        "Em calibração": ("#ede9fe", "#5b21b6"),
+    }
 
-    for idx, eq in enumerate(equipamentos_ordenados, start=1):
-        data_registo = eq.criado_em.strftime("%d/%m/%Y %H:%M") if eq.criado_em else "-"
-        codigo = eq.codigo or "-"
-        linhas.extend([
-            f"{idx}. {eq.nome} ({codigo})",
-            f"   Tipo: {eq.tipo}   |   Estado: {eq.estado_atual}",
-            f"   Localização: {eq.localizacao}",
-            f"   Registado em: {data_registo}",
-            "",
-        ])
+    def _badge(estado_val: str) -> str:
+        bg, fg = _CORES_ESTADO.get(estado_val, ("#f1f5f9", "#334155"))
+        return (
+            f'<span style="background:{bg};color:{fg};padding:2px 8px;'
+            f'border-radius:4px;font-size:9pt;font-weight:600;white-space:nowrap;">'
+            f'{estado_val}</span>'
+        )
 
-    ficheiro_pdf = _gerar_pdf_texto("Relatorio de Equipamentos", linhas)
-    timestamp = _agora_utc().strftime("%Y%m%d-%H%M%S")
+    linhas_tabela = []
+    for idx, eq in enumerate(ordenados):
+        bg_linha = "#f8fafc" if idx % 2 == 0 else "#ffffff"
+        data_str = eq.criado_em.strftime("%d/%m/%Y") if eq.criado_em else "—"
+        linhas_tabela.append(f"""
+        <tr style="background:{bg_linha};">
+            <td class="mono">EQ-{str(eq.id).zfill(3)}</td>
+            <td><strong>{eq.nome or "—"}</strong></td>
+            <td class="mono">{eq.codigo or "—"}</td>
+            <td>{eq.tipo or "—"}</td>
+            <td>{eq.localizacao or "—"}</td>
+            <td style="text-align:center;">{_badge(eq.estado_atual)}</td>
+            <td style="text-align:center;color:#64748b;">{data_str}</td>
+        </tr>""")
+
+    filtro_desc = ""
+    if filtro_norm:
+        filtro_desc += f'&nbsp;·&nbsp;Filtro: <em>"{filtro or ""}"</em>'
+    if estado_norm:
+        filtro_desc += f'&nbsp;·&nbsp;Estado: <em>"{estado or ""}"</em>'
+
+    timestamp_formatado = _agora_utc().strftime("%d/%m/%Y às %H:%M")
+    timestamp_ficheiro  = _agora_utc().strftime("%Y%m%d-%H%M%S")
+
+    html = f"""<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8" />
+    <style>
+        @page {{
+            size: A4 landscape;
+            margin: 15mm 12mm 18mm 12mm;
+        }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 10pt;
+            color: #1e293b;
+            line-height: 1.4;
+        }}
+        .header {{
+            border-bottom: 3px solid #dc2626;
+            padding-bottom: 8px;
+            margin-bottom: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }}
+        .logo-img {{ height: 36px; display: block; }}
+        .logo-fallback {{ font-size: 20pt; font-weight: 900; color: #dc2626; letter-spacing: -1px; }}
+        .doc-meta {{ font-size: 8pt; color: #64748b; text-align: right; line-height: 1.6; }}
+        .doc-title {{ font-size: 14pt; font-weight: 700; margin-bottom: 2px; }}
+        .resumo {{
+            font-size: 9pt;
+            color: #475569;
+            margin-bottom: 12px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 9pt;
+        }}
+        thead tr {{
+            background: #1e293b;
+            color: #f8fafc;
+        }}
+        thead th {{
+            padding: 7px 9px;
+            text-align: left;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 8pt;
+            white-space: nowrap;
+        }}
+        tbody td {{
+            padding: 6px 9px;
+            border-bottom: 1px solid #e2e8f0;
+            vertical-align: middle;
+        }}
+        .mono {{ font-family: "Courier New", Courier, monospace; font-size: 8.5pt; }}
+        .footer-note {{
+            margin-top: 14px;
+            font-size: 7.5pt;
+            color: #94a3b8;
+            text-align: center;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 6px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            {_LOGO_HTML}
+            <div class="doc-title">Inventário de Equipamentos</div>
+        </div>
+        <div class="doc-meta">
+            Gerado em: {timestamp_formatado} (UTC)<br/>
+            Total de registos: <strong>{len(ordenados)}</strong>{filtro_desc}
+        </div>
+    </div>
+
+    <div class="resumo">
+        Documento de circulação interna — gerado automaticamente pelo sistema de gestão laboratorial Industrial Testing Lab.
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Nome do Equipamento</th>
+                <th>Código</th>
+                <th>Tipo</th>
+                <th>Localização</th>
+                <th style="text-align:center;">Estado</th>
+                <th style="text-align:center;">Registo</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join(linhas_tabela) if linhas_tabela else
+             '<tr><td colspan="7" style="text-align:center;padding:20px;color:#94a3b8;">Nenhum equipamento encontrado para os filtros aplicados.</td></tr>'}
+        </tbody>
+    </table>
+
+    <div class="footer-note">
+        Industrial Testing Lab — Documento de Circulação Interna — Confidencial
+    </div>
+</body>
+</html>"""
+
+    try:
+        pdf_bytes = _gerar_pdf_playwright(html)
+    except Exception as exc:
+        logger.error("Falha ao gerar PDF do inventário de equipamentos: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno ao compilar o relatório PDF: {exc}",
+        )
 
     return Response(
-        content=ficheiro_pdf,
+        content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="equipamentos-{timestamp}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="inventario-equipamentos-{timestamp_ficheiro}.pdf"'},
     )
+
+
+@app.get("/equipamentos/{equipamento_id}/exportar-pdf", summary="Relatório metrológico individual em PDF")
+def exportar_relatorio_pdf_individual(
+    equipamento_id: int,
+    session: Session = Depends(get_session),
+):
+    if equipamento_id <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O identificador do equipamento fornecido é inválido.",
+        )
+
+    equipamento = session.get(Equipamento, equipamento_id)
+    if not equipamento:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"O ativo com o ID {equipamento_id} não existe no ecossistema.",
+        )
+
+    stmt = (
+        select(Calibracao)
+        .where(Calibracao.equipamento_id == equipamento_id)
+        .order_by(Calibracao.data_realizada.desc())
+    )
+    calibracao_mais_recente = session.exec(stmt).first()
+    data_proxima = (
+        calibracao_mais_recente.proxima_data.strftime("%d/%m/%Y")
+        if calibracao_mais_recente and calibracao_mais_recente.proxima_data
+        else "Não definida"
+    )
+
+    html_content = f"""
+    <html>
+    <head>
+        <style>
+            @page {{ size: A4; margin: 20mm; }}
+            body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1e293b; margin: 0; padding: 0; line-height: 1.5; }}
+            .header {{ border-bottom: 2px solid #dc2626; padding-bottom: 10px; margin-bottom: 20px; }}
+            .logo-placeholder {{ font-size: 24pt; font-weight: bold; color: #dc2626; letter-spacing: -1px; }}
+            .subtitle {{ font-size: 10pt; color: #64748b; text-transform: uppercase; }}
+            .title {{ font-size: 18pt; font-weight: bold; margin-top: 5px; }}
+            .meta-grid {{ display: table; width: 100%; margin-bottom: 30px; border-collapse: collapse; }}
+            .meta-row {{ display: table-row; }}
+            .meta-cell {{ display: table-cell; padding: 8px; border: 1px solid #e2e8f0; font-size: 10pt; }}
+            .meta-label {{ font-weight: bold; background-color: #f8fafc; width: 30%; }}
+            .section-title {{ font-size: 12pt; font-weight: bold; color: #0f172a; margin-bottom: 10px; text-transform: uppercase; }}
+            .footer-note {{ font-size: 8pt; color: #94a3b8; margin-top: 50px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 10px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="logo-placeholder">INDUSTRIAL TESTING LAB</div>
+            <div class="subtitle">Testing Centre — Relatório Operacional do Ativo</div>
+            <div class="title">{equipamento.nome}</div>
+        </div>
+
+        <div class="section-title">Especificações do Equipamento</div>
+        <div class="meta-grid">
+            <div class="meta-row">
+                <div class="meta-cell meta-label">Código Interno</div>
+                <div class="meta-cell">{equipamento.codigo or "—"}</div>
+            </div>
+            <div class="meta-row">
+                <div class="meta-cell meta-label">Tipo de Ativo</div>
+                <div class="meta-cell">{equipamento.tipo}</div>
+            </div>
+            <div class="meta-row">
+                <div class="meta-cell meta-label">Localização Física</div>
+                <div class="meta-cell">{equipamento.localizacao}</div>
+            </div>
+            <div class="meta-row">
+                <div class="meta-cell meta-label">Próxima Calibração</div>
+                <div class="meta-cell" style="color: #b45309; font-weight: bold;">{data_proxima}</div>
+            </div>
+        </div>
+
+        <div class="section-title">Estado e Disponibilidade Metrológica</div>
+        <p style="font-size: 10pt;">Documento gerado automaticamente pelo servidor em <strong>{dt.datetime.now().strftime('%d/%m/%Y às %H:%M')}</strong>. Os dados acima refletem fielmente o estado atualizado do ativo persistido na base de dados central, estando em conformidade com as diretivas de rastreabilidade do laboratório.</p>
+
+        <div class="footer-note">
+            Industrial Testing Lab — Documento de Circulação Interna — Confidencial
+        </div>
+    </body>
+    </html>
+    """
+
+    try:
+        buffer = io.BytesIO()
+        result = pisa.CreatePDF(html_content, dest=buffer)
+        if result.err:
+            raise RuntimeError(f"xhtml2pdf errors: {result.err}")
+        pdf_bytes = buffer.getvalue()
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno ao processar a compilação do relatório PDF: {str(err)}",
+        )
+
+    nome_ficheiro = f"Relatorio_{equipamento.codigo or equipamento_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={nome_ficheiro}"},
+    )
+
 
 @app.post("/equipamentos", summary="Criar novo equipamento")
 def criar_equipamento(
@@ -1450,6 +1984,12 @@ def criar_equipamento(
     # para facilitar testes de persistência no MSSQL. Remover este
     # comentário e restaurar `Depends(exigir_admin)` em produção.
     equipamento = Equipamento(**dados.model_dump())
+    # LOG DE DIAGNÓSTICO — confirma recepção dos limites térmicos antes da persistência.
+    # Remover após validação em ambiente de desenvolvimento.
+    logger.debug(
+        "[criar_equipamento] temp_min=%s  temp_max=%s  humidade_max=%s",
+        equipamento.temp_min, equipamento.temp_max, equipamento.humidade_max,
+    )
     try:
         session.add(equipamento)
         _persistir_sessao(session, "Falha ao criar equipamento")
@@ -2067,6 +2607,30 @@ def obter_sessao_ativa(
         raise HTTPException(status_code=503, detail="Falha de ligação à base de dados") from exc
 
 
+@app.get("/equipamentos/{equipamento_id}/sessao-em-curso", summary="Sessão atualmente em curso (pública)")
+def obter_sessao_em_curso(equipamento_id: int, session: Session = Depends(get_session)) -> dict[str, Any]:
+    """Devolve a sessão de uso em curso para o equipamento, independentemente do utilizador.
+    Não requer autenticação — usado para mostrar 'Em curso desde' na UI pública."""
+    try:
+        sessao = session.exec(
+            select(SessaoUso).where(
+                SessaoUso.equipamento_id == equipamento_id,
+                SessaoUso.fim.is_(None),
+            )
+        ).first()
+        if not sessao:
+            return {}
+        return {
+            "inicio": _iso_z(sessao.inicio) if sessao.inicio else None,
+            "utilizador": sessao.utilizador,
+            "duracao_prevista_minutos": sessao.duracao_prevista_minutos,
+            "fim_automatico": _iso_z(sessao.fim_automatico) if sessao.fim_automatico else None,
+        }
+    except SQLAlchemyError as exc:
+        logger.exception("Erro ao obter sessão em curso")
+        raise HTTPException(status_code=503, detail="Falha de ligação à base de dados") from exc
+
+
 @app.get("/equipamentos/{equipamento_id}/sessoes", summary="Histórico de sessões de um equipamento")
 def listar_sessoes(equipamento_id: int, session: Session = Depends(get_session)):
     return session.exec(
@@ -2133,13 +2697,27 @@ def registar_avaria(
     session: Session = Depends(get_session),
     utilizador: Optional[Utilizador] = Depends(obter_utilizador_opcional),
 ) -> dict[str, Any]:
-    """Registar uma avaria e atualizar o estado do equipamento para 'Avariado'."""
+    """Registar uma avaria e transitar o estado do equipamento por severidade.
+
+    A transição de estado é gerida pelo evento ORM `marcar_estado_equipamento_por_severidade`
+    definido em models.py, que é invocado automaticamente após o INSERT da avaria:
+      - severidade BLOQUEANTE → equipamento passa para 'Avariado'  (check-in bloqueado)
+    - severidade ALERTA     → equipamento passa para 'Limitado' (check-in permitido)
+
+    Porquê não alterar eq.estado_atual aqui diretamente: se o fizéssemos, o valor
+    fixo sobrescreveria o estado calculado pelo evento ORM, anulando a distinção
+    de severidade que é o núcleo do requisito de Modo Limitado.
+    """
     eq = _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
-    
-    # Marcar que esta avaria foi registada manualmente para evitar duplicado do trigger
+
+    # Sinalizar ao evento `criar_avaria_se_transitou_para_avariado` (models.py) que
+    # esta avaria foi criada explicitamente pelo endpoint — evita duplicado ORM.
     setattr(eq, "_avaria_manual_registada", True)
-    
-    # Criar o registo de avaria
+
+    # Criar o registo de avaria com o campo severidade mapeado explicitamente.
+    # Crítico: o evento after_insert lê target.severidade para decidir o estado
+    # de destino do equipamento — se não for passado aqui, ficaria no default
+    # do modelo (BLOQUEANTE) independentemente do que o utilizador enviou.
     avaria = Avaria(
         equipamento_id=equipamento_id,
         utilizador_id=utilizador.id if utilizador else dados.utilizador_id,
@@ -2147,42 +2725,93 @@ def registar_avaria(
         empresa_externa=dados.empresa_externa,
         custo_reparacao=dados.custo_reparacao,
         num_sc_po=dados.num_sc_po,
+        severidade=dados.severidade,
     )
     session.add(avaria)
-    
-    # Atualizar estado para Avariado
-    eq.estado_atual = EstadoEquipamento.AVARIADO.value
-    session.add(eq)
-    
+
     _persistir_sessao(session, "Falha ao registar avaria")
     session.refresh(avaria)
+    # Refresh ao equipamento para devolver o estado atualizado pelo evento ORM
     session.refresh(eq)
     return {"mensagem": "Avaria registada com sucesso", "estado_atual": eq.estado_atual, "avaria": avaria}
 
 def _resolver_avaria_logica(avaria_id: int, dados: AvariaResolve, session: Session) -> dict[str, Any]:
+    """Marca uma avaria como resolvida e recalcula o estado do equipamento.
+
+    Implementa a regra de resolução defensiva com três níveis de prioridade:
+      1. Se ainda existir pelo menos uma avaria BLOQUEANTE aberta → 'Avariado'
+    2. Se não houver bloqueantes mas houver avarias de ALERTA abertas → 'Limitado'
+      3. Se não existir nenhuma avaria ativa → 'Disponível'
+
+    Porquê esta hierarquia: a resolução de uma avaria nunca deve promover o
+    equipamento para um estado mais saudável do que o garantido pelas avarias
+    restantes. Sem esta lógica, resolver uma avaria ALERTA com uma BLOQUEANTE
+    ainda aberta colocaria o equipamento erroneamente como 'Disponível',
+    permitindo check-ins e distorcendo a métrica de Disponibilidade do OEE.
+
+    A lógica corre dentro de uma transação gerida por `_persistir_sessao`,
+    que executa commit em caso de sucesso e rollback em caso de SQLAlchemyError.
+    """
     avaria = session.get(Avaria, avaria_id)
     if not avaria:
         raise HTTPException(status_code=404, detail="Avaria não encontrada")
     if avaria.resolvida:
         raise HTTPException(status_code=400, detail="Avaria já estava resolvida")
+
     avaria.resolvida = True
     avaria.data_resolucao = _agora_utc()
     if dados.relatorio_tecnico:
         avaria.notas_resolucao = dados.relatorio_tecnico
     if dados.custo is not None:
         avaria.custo_reparacao = dados.custo
-    outras_abertas = session.exec(
+
+    # ── Regra de resolução defensiva (3 níveis de prioridade) ────────────────
+    # Consultar avarias restantes por severidade, excluindo a que está a ser
+    # resolvida agora (id != avaria_id). A consulta corre antes do commit para
+    # que o estado da avaria atual (resolvida=True) ainda não esteja persistido,
+    # garantindo que não se conta a si própria como "ainda aberta".
+
+    outras_bloqueantes = session.exec(
         select(Avaria).where(
             Avaria.equipamento_id == avaria.equipamento_id,
             Avaria.resolvida == False,
-            Avaria.id != avaria_id
+            Avaria.id != avaria_id,
+            Avaria.severidade == SeveridadeAvaria.BLOQUEANTE.value,
         )
     ).first()
-    if not outras_abertas:
-        eq = session.get(Equipamento, avaria.equipamento_id)
-        if eq and normalizar_estado_equipamento(eq.estado_atual) == EstadoEquipamento.AVARIADO.value:
-            eq.estado_atual = EstadoEquipamento.DISPONIVEL.value
+
+    outras_alerta = session.exec(
+        select(Avaria).where(
+            Avaria.equipamento_id == avaria.equipamento_id,
+            Avaria.resolvida == False,
+            Avaria.id != avaria_id,
+            Avaria.severidade == SeveridadeAvaria.ALERTA.value,
+        )
+    ).first()
+
+    eq = session.get(Equipamento, avaria.equipamento_id)
+    if eq:
+        estado_atual_norm = normalizar_estado_equipamento(eq.estado_atual)
+        # Só transitar se o equipamento estiver num estado de falha.
+        # Porquê: evita sobrescrever estados como 'Ocupado' ou 'Em manutenção',
+        # que têm precedência operacional própria e não foram causados por avarias.
+        estados_de_falha = {
+            EstadoEquipamento.AVARIADO.value,
+            EstadoEquipamento.DEGRADADO.value,
+        }
+        if estado_atual_norm in estados_de_falha:
+            if outras_bloqueantes:
+                # Nível 1: ainda há falhas graves — equipamento permanece bloqueado
+                novo_estado = EstadoEquipamento.AVARIADO.value
+            elif outras_alerta:
+                # Nível 2: sem bloqueantes mas com alertas — modo limitado activo
+                novo_estado = EstadoEquipamento.DEGRADADO.value
+            else:
+                # Nível 3: todas as avarias resolvidas — equipamento recuperado
+                novo_estado = EstadoEquipamento.DISPONIVEL.value
+            eq.estado_atual = novo_estado
             session.add(eq)
+
     session.add(avaria)
     _persistir_sessao(session, "Falha ao resolver avaria")
     session.refresh(avaria)
@@ -2260,35 +2889,79 @@ def exportar_avarias_pdf(
     equipamentos_por_id = {e.id: e for e in equipamentos}
     utilizadores_por_id = {u.id: u for u in utilizadores}
 
-    linhas = [
-        f"Total de avarias: {len(avarias)}",
-        f"Gerado em: {_agora_utc().strftime('%d/%m/%Y %H:%M')} (UTC)",
-        "",
-    ]
+    agora = _agora_utc()
+    timestamp_fmt = agora.strftime("%d/%m/%Y às %H:%M")
+    timestamp_ficheiro = agora.strftime("%Y%m%d-%H%M%S")
 
+    n_abertas = sum(1 for a in avarias if not a.resolvida)
+    n_resolvidas = len(avarias) - n_abertas
+
+    kpis_html = f"""
+    <div class="kpis">
+      <div class="kpi"><div class="kpi-label">Total de Avarias</div>
+        <div class="kpi-value">{len(avarias)}</div><div class="kpi-sub">no filtro actual</div></div>
+      <div class="kpi"><div class="kpi-label">Abertas</div>
+        <div class="kpi-value" style="color:#dc2626;">{n_abertas}</div><div class="kpi-sub">por resolver</div></div>
+      <div class="kpi"><div class="kpi-label">Resolvidas</div>
+        <div class="kpi-value" style="color:#166534;">{n_resolvidas}</div><div class="kpi-sub">encerradas</div></div>
+    </div>"""
+
+    linhas_tabela = []
     for idx, avaria in enumerate(avarias, start=1):
         eq = equipamentos_por_id.get(avaria.equipamento_id)
         ut = utilizadores_por_id.get(avaria.utilizador_id) if avaria.utilizador_id is not None else None
-        data_registo = avaria.data_registo.strftime("%d/%m/%Y %H:%M") if avaria.data_registo else "-"
-        data_resolucao = avaria.data_resolucao.strftime("%d/%m/%Y %H:%M") if avaria.data_resolucao else "-"
-        linhas.extend([
-            f"{idx}. AV-{avaria.id:03d} - {eq.nome if eq else f'EQ-{avaria.equipamento_id}'}",
-            f"   Código: {eq.codigo if eq else '—'}",
-            f"   Descrição: {avaria.descricao}",
-            f"   Registada por: {ut.nome if ut else '—'}",
-            f"   Estado: {'Resolvida' if avaria.resolvida else 'Aberta'}",
-            f"   Data registo: {data_registo}",
-            f"   Data resolução: {data_resolucao}",
-            "",
-        ])
+        data_registo = avaria.data_registo.strftime("%d/%m/%Y %H:%M") if avaria.data_registo else "—"
+        data_resolucao = avaria.data_resolucao.strftime("%d/%m/%Y") if avaria.data_resolucao else "—"
+        if avaria.resolvida:
+            estado_badge = '<span class="badge badge-green">Resolvida</span>'
+        else:
+            estado_badge = '<span class="badge badge-red">Aberta</span>'
+        descricao = (avaria.descricao or "")[:120]
+        linhas_tabela.append(f"""
+        <tr>
+          <td class="mono" style="text-align:center;">AV-{avaria.id:03d}</td>
+          <td><strong>{eq.nome if eq else f"EQ-{avaria.equipamento_id}"}</strong>
+              <span class="dim">{eq.codigo if eq else ""}</span></td>
+          <td>{descricao}</td>
+          <td class="mono">{data_registo}<br/><span class="dim">{ut.nome if ut else "—"}</span></td>
+          <td style="text-align:center;">{estado_badge}</td>
+          <td class="mono">{data_resolucao}</td>
+        </tr>""")
 
-    ficheiro_pdf = _gerar_pdf_texto("Relatorio de Avarias", linhas)
-    timestamp = _agora_utc().strftime("%Y%m%d-%H%M%S")
+    filtros_desc = ""
+    if pesquisa_normalizada:
+        filtros_desc += f'Pesquisa: "{pesquisa}" · '
+    if resolvida is not None:
+        filtros_desc += "Resolvidas" if resolvida else "Abertas"
+
+    html = _html_relatorio(
+        titulo_doc="Relatório de Avarias",
+        subtitulo=filtros_desc.rstrip(" · "),
+        timestamp_fmt=timestamp_fmt,
+        meta_extra=f"Total de registos: <strong>{len(avarias)}</strong>",
+        kpis_html=kpis_html,
+        section_label="Registo de Avarias",
+        cabecalhos=[
+            ("ID", "8%"), ("Equipamento", "22%"), ("Descrição", "30%"),
+            ("Registo / Reportado por", "20%"), ("Estado", "10%"), ("Resolução", "10%"),
+        ],
+        linhas_tabela=linhas_tabela,
+        colspan=6,
+    )
+
+    try:
+        pdf_bytes = _gerar_pdf_playwright(html)
+    except Exception as exc:
+        logger.error("Falha ao gerar PDF de avarias: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno ao compilar o relatório PDF: {exc}",
+        )
 
     return Response(
-        content=ficheiro_pdf,
+        content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="avarias-{timestamp}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="avarias-{timestamp_ficheiro}.pdf"'},
     )
 
 # ─────────────────────────────────────────────
@@ -2321,6 +2994,7 @@ def registar_manutencao(
         executado_por_id=dados.executado_por_id,
         tipo_intervencao=dados.tipo_intervencao,
         custo_eur=dados.custo_eur,
+        fornecedor=dados.fornecedor,
         referencia_sc_po=dados.referencia_sc_po,
         observacoes_externas=dados.observacoes_externas,
     )
@@ -2334,6 +3008,257 @@ def registar_manutencao(
 @app.get("/manutencoes")
 def listar_todas_manutencoes(session: Session = Depends(get_session)):
     return session.exec(select(Manutencao).order_by(Manutencao.data_realizada.desc())).all()
+
+
+# ─────────────────────────────────────────────
+# ANALYTICS FINANCEIROS
+# ─────────────────────────────────────────────
+
+def _to_utc(dt: Optional[datetime]) -> datetime:
+    """Garante que um datetime tem timezone UTC — SQLite devolve datetimes naive."""
+    if dt is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+@app.get("/financeiro/resumo", summary="Resumo financeiro por período")
+def resumo_financeiro(
+    ano: int,
+    mes: Optional[int] = None,
+    equipamento_id: Optional[int] = None,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    from calendar import monthrange
+
+    if mes:
+        _, ultimo_dia = monthrange(ano, mes)
+        data_inicio = datetime(ano, mes, 1, tzinfo=timezone.utc)
+        data_fim = datetime(ano, mes, ultimo_dia, 23, 59, 59, tzinfo=timezone.utc)
+    else:
+        data_inicio = datetime(ano, 1, 1, tzinfo=timezone.utc)
+        data_fim = datetime(ano, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+
+    q_avarias = select(Avaria).where(
+        Avaria.data_registo >= data_inicio,
+        Avaria.data_registo <= data_fim,
+        Avaria.custo_reparacao.is_not(None),
+    )
+    q_manutencoes = select(Manutencao).where(
+        Manutencao.data_realizada >= data_inicio,
+        Manutencao.data_realizada <= data_fim,
+        Manutencao.custo_eur.is_not(None),
+    )
+    q_calibracoes = select(Calibracao).where(
+        Calibracao.data_realizada >= data_inicio,
+        Calibracao.data_realizada <= data_fim,
+        Calibracao.custo_eur.is_not(None),
+    )
+
+    if equipamento_id:
+        q_avarias = q_avarias.where(Avaria.equipamento_id == equipamento_id)
+        q_manutencoes = q_manutencoes.where(Manutencao.equipamento_id == equipamento_id)
+        q_calibracoes = q_calibracoes.where(Calibracao.equipamento_id == equipamento_id)
+
+    avarias = session.exec(q_avarias).all()
+    manutencoes = session.exec(q_manutencoes).all()
+    calibracoes = session.exec(q_calibracoes).all()
+
+    eq_ids = {a.equipamento_id for a in avarias} | \
+             {m.equipamento_id for m in manutencoes} | \
+             {c.equipamento_id for c in calibracoes}
+    equipamentos_map: dict[int, str] = {}
+    if eq_ids:
+        eqs = session.exec(select(Equipamento).where(Equipamento.id.in_(eq_ids))).all()
+        equipamentos_map = {e.id: e.nome for e in eqs}
+
+    total_avarias = sum(a.custo_reparacao or 0 for a in avarias)
+    total_manutencoes = sum(m.custo_eur or 0 for m in manutencoes)
+    total_calibracoes = sum(c.custo_eur or 0 for c in calibracoes)
+    total_geral = total_avarias + total_manutencoes + total_calibracoes
+
+    por_eq: dict[int, dict] = {}
+    for a in avarias:
+        e = por_eq.setdefault(a.equipamento_id, {
+            "equipamento_id": a.equipamento_id,
+            "nome": equipamentos_map.get(a.equipamento_id, f"EQ-{a.equipamento_id}"),
+            "avarias_eur": 0.0, "manutencoes_eur": 0.0,
+            "calibracoes_eur": 0.0, "total_eur": 0.0, "n_intervencoes": 0,
+        })
+        e["avarias_eur"] += a.custo_reparacao or 0
+        e["n_intervencoes"] += 1
+    for m in manutencoes:
+        e = por_eq.setdefault(m.equipamento_id, {
+            "equipamento_id": m.equipamento_id,
+            "nome": equipamentos_map.get(m.equipamento_id, f"EQ-{m.equipamento_id}"),
+            "avarias_eur": 0.0, "manutencoes_eur": 0.0,
+            "calibracoes_eur": 0.0, "total_eur": 0.0, "n_intervencoes": 0,
+        })
+        e["manutencoes_eur"] += m.custo_eur or 0
+        e["n_intervencoes"] += 1
+    for c in calibracoes:
+        e = por_eq.setdefault(c.equipamento_id, {
+            "equipamento_id": c.equipamento_id,
+            "nome": equipamentos_map.get(c.equipamento_id, f"EQ-{c.equipamento_id}"),
+            "avarias_eur": 0.0, "manutencoes_eur": 0.0,
+            "calibracoes_eur": 0.0, "total_eur": 0.0, "n_intervencoes": 0,
+        })
+        e["calibracoes_eur"] += c.custo_eur or 0
+        e["n_intervencoes"] += 1
+    for e in por_eq.values():
+        e["total_eur"] = round(e["avarias_eur"] + e["manutencoes_eur"] + e["calibracoes_eur"], 2)
+    lista_por_eq = sorted(por_eq.values(), key=lambda x: x["total_eur"], reverse=True)
+
+    por_forn: dict[str, dict] = {}
+    def _add_forn(nome: Optional[str], valor: float) -> None:
+        if not nome or not nome.strip():
+            return
+        chave = nome.strip().lower()
+        f = por_forn.setdefault(chave, {"fornecedor": nome.strip(), "total_eur": 0.0, "n_intervencoes": 0})
+        f["total_eur"] += valor
+        f["n_intervencoes"] += 1
+    for a in avarias:
+        _add_forn(a.empresa_externa, a.custo_reparacao or 0)
+    for m in manutencoes:
+        _add_forn(getattr(m, "fornecedor", None), m.custo_eur or 0)
+    for c in calibracoes:
+        _add_forn(getattr(c, "fornecedor", None), c.custo_eur or 0)
+    for f in por_forn.values():
+        f["total_eur"] = round(f["total_eur"], 2)
+    lista_por_forn = sorted(por_forn.values(), key=lambda x: x["total_eur"], reverse=True)
+
+    evolucao_mensal: list[dict] = []
+    MESES_PT = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+    if not mes:
+        for m_num in range(1, 13):
+            _, ult = monthrange(ano, m_num)
+            m_ini = datetime(ano, m_num, 1, tzinfo=timezone.utc)
+            m_fim = datetime(ano, m_num, ult, 23, 59, 59, tzinfo=timezone.utc)
+            av_m = sum(a.custo_reparacao or 0 for a in avarias
+                       if m_ini <= _to_utc(a.data_registo) <= m_fim)
+            mn_m = sum(m.custo_eur or 0 for m in manutencoes
+                       if m_ini <= _to_utc(m.data_realizada) <= m_fim)
+            cl_m = sum(c.custo_eur or 0 for c in calibracoes
+                       if m_ini <= _to_utc(c.data_realizada) <= m_fim)
+            evolucao_mensal.append({
+                "mes": m_num,
+                "label": MESES_PT[m_num - 1],
+                "avarias_eur": round(av_m, 2),
+                "manutencoes_eur": round(mn_m, 2),
+                "calibracoes_eur": round(cl_m, 2),
+                "total_eur": round(av_m + mn_m + cl_m, 2),
+            })
+
+    label_periodo = f"{ano}/{mes:02d}" if mes else str(ano)
+    return {
+        "periodo": {"ano": ano, "mes": mes, "label": label_periodo},
+        "total_eur": round(total_geral, 2),
+        "por_categoria": {
+            "avarias_eur": round(total_avarias, 2),
+            "manutencoes_eur": round(total_manutencoes, 2),
+            "calibracoes_eur": round(total_calibracoes, 2),
+        },
+        "por_equipamento": lista_por_eq,
+        "por_fornecedor": lista_por_forn,
+        "evolucao_mensal": evolucao_mensal,
+    }
+
+
+@app.get("/manutencoes/exportar/pdf", summary="Exportar registo de manutenções em PDF")
+def exportar_manutencoes_pdf(
+    filtro: Optional[str] = None,
+    tipo: Optional[str] = None,
+    session: Session = Depends(get_session),
+):
+    manutencoes = session.exec(select(Manutencao).order_by(Manutencao.data_realizada.desc())).all()
+
+    filtro_norm = (filtro or "").strip().lower()
+    tipo_norm = (tipo or "").strip()
+
+    eq_ids = {m.equipamento_id for m in manutencoes}
+    ut_ids = {m.executado_por_id for m in manutencoes if m.executado_por_id is not None}
+    eq_map = {e.id: e for e in session.exec(select(Equipamento).where(Equipamento.id.in_(eq_ids))).all()} if eq_ids else {}
+    ut_map = {u.id: u for u in session.exec(select(Utilizador).where(Utilizador.id.in_(ut_ids))).all()} if ut_ids else {}
+
+    if filtro_norm:
+        manutencoes = [
+            m for m in manutencoes
+            if filtro_norm in (eq_map.get(m.equipamento_id, None) and eq_map[m.equipamento_id].nome or "").lower()
+            or filtro_norm in (m.descricao or "").lower()
+            or filtro_norm in (m.tipo_intervencao or "").lower()
+        ]
+    if tipo_norm:
+        manutencoes = [m for m in manutencoes if (m.tipo_intervencao or "") == tipo_norm]
+
+    agora = _agora_utc()
+    timestamp_fmt = agora.strftime("%d/%m/%Y às %H:%M")
+    timestamp_ficheiro = agora.strftime("%Y%m%d-%H%M%S")
+
+    _CORES_TIPO = {
+        "Preventiva": "badge-blue", "Corretiva": "badge-red",
+        "Diagnóstico": "badge-yellow", "Reparação Externa": "badge-purple",
+    }
+
+    linhas_tabela = []
+    for idx, m in enumerate(manutencoes, start=1):
+        eq = eq_map.get(m.equipamento_id)
+        ut = ut_map.get(m.executado_por_id) if m.executado_por_id else None
+        data_str = m.data_realizada.strftime("%d/%m/%Y") if m.data_realizada else "—"
+        prox_str = m.proxima_data.strftime("%d/%m/%Y") if m.proxima_data else "—"
+        tipo_label = m.tipo_intervencao or "—"
+        tipo_cls = _CORES_TIPO.get(tipo_label, "badge-gray")
+        badge_tipo = f'<span class="badge {tipo_cls}">{tipo_label}</span>' if m.tipo_intervencao else "—"
+        custo = f"{m.custo_eur:.2f} €" if m.custo_eur is not None else "—"
+        descricao = (m.descricao or "")[:90]
+        linhas_tabela.append(f"""
+        <tr>
+          <td class="mono" style="text-align:center;">{idx}</td>
+          <td><strong>{eq.nome if eq else f"EQ-{m.equipamento_id}"}</strong>
+              <span class="dim">{eq.codigo if eq else ""}</span></td>
+          <td>{badge_tipo}</td>
+          <td>{descricao}</td>
+          <td class="mono">{data_str}</td>
+          <td class="mono">{prox_str}</td>
+          <td>{ut.nome if ut else "—"}</td>
+          <td class="mono" style="text-align:right;">{custo}</td>
+        </tr>""")
+
+    filtros_desc = ""
+    if filtro_norm:
+        filtros_desc += f'Pesquisa: "{filtro}" · '
+    if tipo_norm:
+        filtros_desc += f"Tipo: {tipo}"
+
+    html = _html_relatorio(
+        titulo_doc="Registo de Manutenções",
+        subtitulo=filtros_desc.rstrip(" · "),
+        timestamp_fmt=timestamp_fmt,
+        meta_extra=f"Total de registos: <strong>{len(manutencoes)}</strong>",
+        kpis_html="",
+        section_label="Histórico de Manutenções",
+        cabecalhos=[
+            ("#", "4%"), ("Equipamento", "20%"), ("Tipo", "11%"), ("Descrição", "25%"),
+            ("Data", "9%"), ("Próxima", "9%"), ("Executado por", "14%"), ("Custo", "8%"),
+        ],
+        linhas_tabela=linhas_tabela,
+        colspan=8,
+    )
+
+    try:
+        pdf_bytes = _gerar_pdf_playwright(html)
+    except Exception as exc:
+        logger.error("Falha ao gerar PDF de manutenções: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno ao compilar o relatório PDF: {exc}",
+        )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="manutencoes-{timestamp_ficheiro}.pdf"'},
+    )
+
 
 # ─────────────────────────────────────────────
 # CALIBRAÇÕES
@@ -2364,6 +3289,8 @@ def registar_calibracao(
         certificado_url=dados.certificado_url,
         observacoes=dados.observacoes,
         executado_por_id=dados.executado_por_id,
+        custo_eur=dados.custo_eur,
+        fornecedor=dados.fornecedor,
     )
     eq.estado_atual = EstadoEquipamento.CALIBRACAO.value
     session.add(calibracao)
@@ -2386,6 +3313,99 @@ def calibracoes_proximas(dias: int = 30, session: Session = Depends(get_session)
             Calibracao.proxima_data <= limite,
         ).order_by(Calibracao.proxima_data)
     ).all()
+
+
+@app.get("/calibracoes/exportar/pdf", summary="Exportar registo de calibrações em PDF")
+def exportar_calibracoes_pdf(
+    filtro: Optional[str] = None,
+    urgencia: Optional[str] = None,
+    session: Session = Depends(get_session),
+):
+    calibracoes = session.exec(select(Calibracao).order_by(Calibracao.data_realizada.desc())).all()
+
+    eq_ids = {c.equipamento_id for c in calibracoes}
+    ut_ids = {c.executado_por_id for c in calibracoes if c.executado_por_id is not None}
+    eq_map = {e.id: e for e in session.exec(select(Equipamento).where(Equipamento.id.in_(eq_ids))).all()} if eq_ids else {}
+    ut_map = {u.id: u for u in session.exec(select(Utilizador).where(Utilizador.id.in_(ut_ids))).all()} if ut_ids else {}
+
+    filtro_norm = (filtro or "").strip().lower()
+    if filtro_norm:
+        calibracoes = [
+            c for c in calibracoes
+            if filtro_norm in (eq_map.get(c.equipamento_id) and eq_map[c.equipamento_id].nome or "").lower()
+            or filtro_norm in (c.observacoes or "").lower()
+        ]
+
+    agora = _agora_utc()
+    if urgencia == "proximas30":
+        limite = agora + timedelta(days=30)
+        calibracoes = [c for c in calibracoes if c.proxima_data and c.proxima_data <= limite]
+    elif urgencia == "vencidas":
+        calibracoes = [c for c in calibracoes if c.proxima_data and c.proxima_data < agora]
+
+    timestamp_fmt = agora.strftime("%d/%m/%Y às %H:%M")
+    timestamp_ficheiro = agora.strftime("%Y%m%d-%H%M%S")
+
+    linhas_tabela = []
+    for idx, c in enumerate(calibracoes, start=1):
+        eq = eq_map.get(c.equipamento_id)
+        ut = ut_map.get(c.executado_por_id) if c.executado_por_id else None
+        data_str = c.data_realizada.strftime("%d/%m/%Y") if c.data_realizada else "—"
+        prox_str = c.proxima_data.strftime("%d/%m/%Y") if c.proxima_data else "—"
+        periodo = f"{c.periodicidade_dias} dias" if c.periodicidade_dias else "—"
+        cert = '<span class="badge badge-green">Sim</span>' if c.certificado_url else '<span class="badge badge-gray">Não</span>'
+        if c.proxima_data and c.proxima_data < agora:
+            prox_str = f'<span style="color:#dc2626;font-weight:600;">{prox_str}</span>'
+        linhas_tabela.append(f"""
+        <tr>
+          <td class="mono" style="text-align:center;">{idx}</td>
+          <td><strong>{eq.nome if eq else f"EQ-{c.equipamento_id}"}</strong>
+              <span class="dim">{eq.codigo if eq else ""}</span></td>
+          <td class="mono">{data_str}</td>
+          <td class="mono">{prox_str}</td>
+          <td class="mono" style="text-align:center;">{periodo}</td>
+          <td>{ut.nome if ut else "—"}</td>
+          <td style="text-align:center;">{cert}</td>
+        </tr>""")
+
+    filtros_desc = ""
+    if filtro_norm:
+        filtros_desc += f'Pesquisa: "{filtro}" · '
+    if urgencia == "proximas30":
+        filtros_desc += "Próximas 30 dias"
+    elif urgencia == "vencidas":
+        filtros_desc += "Vencidas"
+
+    html = _html_relatorio(
+        titulo_doc="Registo de Calibrações",
+        subtitulo=filtros_desc.rstrip(" · "),
+        timestamp_fmt=timestamp_fmt,
+        meta_extra=f"Total de registos: <strong>{len(calibracoes)}</strong>",
+        kpis_html="",
+        section_label="Histórico de Calibrações",
+        cabecalhos=[
+            ("#", "4%"), ("Equipamento", "25%"), ("Data Realizada", "12%"),
+            ("Próxima Data", "12%"), ("Periodicidade", "11%"),
+            ("Executado por", "22%"), ("Certificado", "14%"),
+        ],
+        linhas_tabela=linhas_tabela,
+        colspan=7,
+    )
+
+    try:
+        pdf_bytes = _gerar_pdf_playwright(html)
+    except Exception as exc:
+        logger.error("Falha ao gerar PDF de calibrações: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno ao compilar o relatório PDF: {exc}",
+        )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="calibracoes-{timestamp_ficheiro}.pdf"'},
+    )
 
 
 @app.get("/equipamentos/{equipamento_id}/documentacao")
@@ -2427,6 +3447,91 @@ def registar_documentacao_equipamento(
 # RESERVAS
 # ─────────────────────────────────────────────
 
+from routers.reservas import router as reservas_router
+
+app.include_router(reservas_router)
+
+
+@app.get("/reservas/exportar/pdf", summary="Exportar todas as reservas em PDF")
+def exportar_reservas_pdf(session: Session = Depends(get_session)):
+    reservas_raw = _listar_reservas_enriquecidas(session)
+    agora = _agora_utc()
+
+    reservas_ordenadas = sorted(reservas_raw, key=lambda r: r["data_inicio"])
+
+    n_ativas = sum(1 for r in reservas_raw if r.get("esta_ativa"))
+    n_futuras = sum(1 for r in reservas_raw if r["data_inicio"] > agora)
+
+    kpis_html = f"""
+    <div class="kpis">
+      <div class="kpi"><div class="kpi-label">Total de Reservas</div>
+        <div class="kpi-value">{len(reservas_raw)}</div><div class="kpi-sub">no sistema</div></div>
+      <div class="kpi"><div class="kpi-label">Activas</div>
+        <div class="kpi-value" style="color:#166534;">{n_ativas}</div><div class="kpi-sub">em curso agora</div></div>
+      <div class="kpi"><div class="kpi-label">Futuras</div>
+        <div class="kpi-value" style="color:#1e40af;">{n_futuras}</div><div class="kpi-sub">agendadas</div></div>
+    </div>"""
+
+    timestamp_fmt = agora.strftime("%d/%m/%Y às %H:%M")
+    timestamp_ficheiro = agora.strftime("%Y%m%d-%H%M%S")
+
+    linhas_tabela = []
+    for idx, r in enumerate(reservas_ordenadas, start=1):
+        inicio = r["data_inicio"]
+        fim = r["data_fim"]
+        inicio_str = inicio.strftime("%d/%m/%Y %H:%M") if isinstance(inicio, datetime) else str(inicio)[:16].replace("T", " ")
+        fim_str = fim.strftime("%d/%m/%Y %H:%M") if isinstance(fim, datetime) else str(fim)[:16].replace("T", " ")
+        projeto = r.get("projeto") or "—"
+        metodo = r.get("metodo") or "—"
+        if r.get("esta_ativa"):
+            estado_badge = '<span class="badge badge-green">● Em curso</span>'
+        elif isinstance(fim, datetime) and fim < agora:
+            estado_badge = '<span class="badge badge-gray">Concluída</span>'
+        else:
+            estado_badge = '<span class="badge badge-blue">Agendada</span>'
+        linhas_tabela.append(f"""
+        <tr>
+          <td class="mono" style="text-align:center;">{idx}</td>
+          <td><strong>{r["equipamento_nome"]}</strong>
+              <span class="dim">{r["equipamento_codigo"]}</span></td>
+          <td class="mono">{inicio_str}<br/><span class="dim">{fim_str}</span></td>
+          <td>{r["utilizador_nome"]}</td>
+          <td>{projeto}</td>
+          <td>{metodo}</td>
+          <td style="text-align:center;">{estado_badge}</td>
+        </tr>""")
+
+    html = _html_relatorio(
+        titulo_doc="Relatório de Reservas",
+        subtitulo="",
+        timestamp_fmt=timestamp_fmt,
+        meta_extra=f"Total de blocos: <strong>{len(reservas_raw)}</strong>",
+        kpis_html=kpis_html,
+        section_label="Todas as Reservas",
+        cabecalhos=[
+            ("#", "3%"), ("Equipamento", "22%"), ("Janela de Alocação", "18%"),
+            ("Utilizador", "17%"), ("Projeto", "12%"), ("Método", "12%"), ("Estado", "16%"),
+        ],
+        linhas_tabela=linhas_tabela,
+        colspan=7,
+    )
+
+    try:
+        pdf_bytes = _gerar_pdf_playwright(html)
+    except Exception as exc:
+        logger.error("Falha ao gerar PDF de reservas: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno ao compilar o relatório PDF: {exc}",
+        )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="reservas-{timestamp_ficheiro}.pdf"'},
+    )
+
+
 @app.get("/reservas", summary="Listar todas as reservas (para o calendário)")
 def listar_reservas(session: Session = Depends(get_session)):
     """
@@ -2444,73 +3549,279 @@ def listar_reservas(session: Session = Depends(get_session)):
     ]
 
 
-@app.get("/reservas/exportar/pdf", summary="Exportar reservas para PDF")
-def exportar_reservas_pdf(session: Session = Depends(get_session)):
-    reservas = _listar_reservas_enriquecidas(session)
-    reservas_ordenadas = sorted(reservas, key=lambda r: r["data_inicio"])
-
-    linhas = [
-        f"Total de reservas: {len(reservas_ordenadas)}",
-        f"Gerado em: {_agora_utc().strftime('%d/%m/%Y %H:%M')} (UTC)",
-        "",
-    ]
-
-    for idx, r in enumerate(reservas_ordenadas, start=1):
-        inicio = r["data_inicio"].strftime("%d/%m/%Y %H:%M")
-        fim = r["data_fim"].strftime("%d/%m/%Y %H:%M")
-        projeto = r["projeto"] or "-"
-        notas = r["notas"] or "-"
-        linhas.extend([
-            f"{idx}. {r['equipamento_codigo']} - {r['equipamento_nome']}",
-            f"   Utilizador: {r['utilizador_nome']}",
-            f"   Inicio: {inicio}   |   Fim: {fim}",
-            f"   Projeto: {projeto}",
-            f"   Notas: {notas}",
-            "",
-        ])
-
-    ficheiro_pdf = _gerar_pdf_texto("Relatorio de Reservas", linhas)
-    timestamp = _agora_utc().strftime("%Y%m%d-%H%M%S")
-
-    return Response(
-        content=ficheiro_pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="reservas-{timestamp}.pdf"'},
-    )
-
-
-@app.get("/planeamento/exportar/pdf", summary="Exportar planeamento global para PDF")
+@app.get("/planeamento/exportar/pdf", summary="Exportar relatório executivo do laboratório em PDF formatado")
 def exportar_planeamento_pdf(session: Session = Depends(get_session)):
-    reservas = _listar_reservas_enriquecidas(session)
-    reservas_ordenadas = sorted(
-        reservas,
-        key=lambda r: (r["equipamento_nome"].lower(), r["data_inicio"]),
+    """Gera o relatório executivo do estado do laboratório em PDF landscape."""
+    agora = _agora_utc()
+    janela_oee = agora - timedelta(days=30)
+
+    todos_equipamentos = session.exec(select(Equipamento)).all()
+    total_equipamentos = len(todos_equipamentos)
+
+    todas_reservas_raw = session.exec(select(Reserva)).all()
+    reservas_ativas = sum(1 for r in todas_reservas_raw if r.data_fim >= agora)
+
+    # ── OEE Global (últimos 30 dias) ────────────────────────────────────────
+    reservas_periodo = session.exec(
+        select(Reserva).where(Reserva.data_inicio >= janela_oee)
+    ).all()
+    sessoes_periodo = session.exec(
+        select(SessaoUso).where(SessaoUso.inicio >= janela_oee)
+    ).all()
+    sessoes_ativas_pre = session.exec(
+        select(SessaoUso).where(SessaoUso.fim.is_(None), SessaoUso.inicio < janela_oee)
+    ).all()
+
+    reservas_por_eq: dict[int, list] = defaultdict(list)
+    for r in reservas_periodo:
+        reservas_por_eq[r.equipamento_id].append(r)
+
+    sessoes_por_eq: dict[int, list] = defaultdict(list)
+    for s in sessoes_periodo + sessoes_ativas_pre:
+        sessoes_por_eq[s.equipamento_id].append(s)
+
+    oees_validos: list[float] = []
+    for eq in todos_equipamentos:
+        res_eq = reservas_por_eq.get(eq.id, [])
+        ses_eq = sessoes_por_eq.get(eq.id, [])
+        planeado_s = sum((r.data_fim - r.data_inicio).total_seconds() for r in res_eq)
+        real_s = 0.0
+        for s in ses_eq:
+            fim_ef = s.fim or agora
+            real_s += max(0, (fim_ef - max(s.inicio, janela_oee)).total_seconds())
+        oee = _calcular_oee_temporal(real_s, planeado_s)
+        if oee is not None:
+            oees_validos.append(oee)
+
+    oee_global_str = (
+        f"{round(sum(oees_validos) / len(oees_validos), 1):.1f}%"
+        if oees_validos else "—"
     )
 
-    linhas = [
-        f"Total de blocos planeados: {len(reservas_ordenadas)}",
-        f"Gerado em: {_agora_utc().strftime('%d/%m/%Y %H:%M')} (UTC)",
-        "",
-    ]
+    # ── Planeamento: todos os blocos ordenados cronologicamente ─────────────
+    reservas_enriquecidas = _listar_reservas_enriquecidas(session)
+    reservas_ordenadas = sorted(
+        reservas_enriquecidas,
+        key=lambda r: r["data_inicio"],
+    )
 
-    for idx, r in enumerate(reservas_ordenadas, start=1):
-        inicio = r["data_inicio"].strftime("%d/%m/%Y %H:%M")
-        fim = r["data_fim"].strftime("%d/%m/%Y %H:%M")
-        projeto = r["projeto"] or "-"
-        linhas.extend([
-            f"{idx}. {r['equipamento_nome']} ({r['equipamento_codigo']})",
-            f"   Janela: {inicio} -> {fim}",
-            f"   Utilizador: {r['utilizador_nome']}   |   Projeto: {projeto}",
-            "",
-        ])
+    # Mapeamento estado → (bg, fg) para badge inline
+    _CORES_ESTADO = {
+        "Disponível":    ("#dcfce7", "#166534"),
+        "Ocupado":       ("#dbeafe", "#1e40af"),
+        "Avariado":      ("#fee2e2", "#991b1b"),
+        "Em manutenção": ("#fef9c3", "#854d0e"),
+        "Em calibração": ("#ede9fe", "#5b21b6"),
+    }
 
-    ficheiro_pdf = _gerar_pdf_texto("Relatorio de Planeamento Global", linhas)
-    timestamp = _agora_utc().strftime("%Y%m%d-%H%M%S")
+    def _badge_estado(est: str) -> str:
+        bg, fg = _CORES_ESTADO.get(est, ("#f1f5f9", "#334155"))
+        return (
+            f'<span style="background:{bg};color:{fg};padding:2px 7px;'
+            f'border-radius:4px;font-size:8pt;font-weight:600;">{est}</span>'
+        )
+
+    linhas_tabela = []
+    for idx, r in enumerate(reservas_ordenadas):
+        bg = "#f8fafc" if idx % 2 == 0 else "#ffffff"
+        inicio_str = r["data_inicio"].strftime("%d/%m/%Y %H:%M")
+        fim_str    = r["data_fim"].strftime("%d/%m/%Y %H:%M")
+        projeto    = r.get("projeto") or "—"
+        metodo     = r.get("metodo") or ""
+        ativo_badge = '<span class="badge-ativo">● Em curso</span>' if r.get("esta_ativa") else "—"
+        linhas_tabela.append(f"""
+        <tr>
+            <td class="mono" style="text-align:center;">{idx + 1}</td>
+            <td><strong>{r['equipamento_nome']}</strong> <span class="dim">{r['equipamento_codigo']}</span></td>
+            <td class="mono">{inicio_str}<br/><span class="dim">{fim_str}</span></td>
+            <td>{r['utilizador_nome']}</td>
+            <td>{projeto}</td>
+            <td>{metodo}</td>
+            <td style="text-align:center;">{ativo_badge}</td>
+        </tr>""")
+
+    timestamp_fmt  = agora.strftime("%d/%m/%Y às %H:%M")
+    timestamp_file = agora.strftime("%Y%m%d-%H%M%S")
+
+
+
+    html = f"""<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8" />
+    <style>
+        *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        @page {{ size: A4 landscape; margin: 15mm 12mm 18mm 12mm; }}
+        body {{
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 9pt;
+            color: #1e293b;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }}
+        .header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            border-bottom: 3px solid #dc2626;
+            padding-bottom: 10px;
+            margin-bottom: 14px;
+        }}
+        .logo-img {{ height: 38px; display: block; }}
+        .logo-fallback {{ font-size: 24pt; font-weight: 900; color: #dc2626; line-height: 1; }}
+        .subtitle {{ font-size: 8pt; color: #64748b; text-transform: uppercase; margin-top: 2px; }}
+        .doc-title {{ font-size: 14pt; font-weight: 700; margin-top: 4px; }}
+        .meta {{ font-size: 8pt; color: #64748b; text-align: right; line-height: 1.8; }}
+        .kpis {{
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }}
+        .kpi {{
+            flex: 1;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            padding: 10px 14px;
+        }}
+        .kpi-label {{ font-size: 7.5pt; color: #64748b; text-transform: uppercase; font-weight: 600; }}
+        .kpi-value {{ font-size: 22pt; font-weight: 700; color: #0f172a; line-height: 1.2; margin: 4px 0; }}
+        .kpi-sub {{ font-size: 7.5pt; color: #94a3b8; }}
+        .section-label {{
+            font-size: 8pt;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+        }}
+        table.plan {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        table.plan thead tr {{
+            background-color: #1e293b;
+            color: #ffffff;
+        }}
+        table.plan thead th {{
+            padding: 9px 8px;
+            font-size: 8.5pt;
+            font-weight: 600;
+            text-align: left;
+            white-space: nowrap;
+        }}
+        table.plan tbody tr:nth-child(even) {{ background-color: #f8fafc; }}
+        table.plan tbody td {{
+            padding: 8px;
+            font-size: 8.5pt;
+            border-bottom: 1px solid #e2e8f0;
+            vertical-align: middle;
+        }}
+        .mono {{ font-family: "Courier New", monospace; font-size: 8pt; }}
+        .dim {{ color: #94a3b8; font-size: 7.5pt; }}
+        .badge-ativo {{
+            display: inline-block;
+            background: #dcfce7;
+            color: #166534;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 7.5pt;
+            font-weight: 600;
+        }}
+        .footer {{
+            margin-top: 14px;
+            font-size: 7pt;
+            color: #94a3b8;
+            text-align: center;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 6px;
+        }}
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div>
+            {_LOGO_HTML}
+            <div class="subtitle">Testing Centre</div>
+            <div class="doc-title">Executive Lab Status</div>
+        </div>
+        <div class="meta">
+            Gerado em: {timestamp_fmt} (UTC)<br/>
+            Período de análise OEE: últimos 30 dias<br/>
+            Blocos de planeamento: <strong>{len(reservas_ordenadas)}</strong>
+        </div>
+    </div>
+
+    <div class="kpis">
+        <div class="kpi">
+            <div class="kpi-label">Total de Equipamentos</div>
+            <div class="kpi-value">{total_equipamentos}</div>
+            <div class="kpi-sub">ativos no inventário</div>
+        </div>
+        <div class="kpi">
+            <div class="kpi-label">Reservas Ativas</div>
+            <div class="kpi-value">{reservas_ativas}</div>
+            <div class="kpi-sub">com data de fim no futuro</div>
+        </div>
+        <div class="kpi">
+            <div class="kpi-label">OEE Global (30 dias)</div>
+            <div class="kpi-value">{oee_global_str}</div>
+            <div class="kpi-sub">eficiência operacional média</div>
+        </div>
+    </div>
+
+    <div class="section-label">Planeamento Global — Todos os Blocos de Alocação</div>
+
+    <table class="plan">
+        <thead>
+            <tr>
+                <th style="width:3%">#</th>
+                <th style="width:26%">Equipamento (Cód. Interno)</th>
+                <th style="width:20%">Janela de Alocação</th>
+                <th style="width:17%">Utilizador</th>
+                <th style="width:9%">Projeto</th>
+                <th style="width:9%">Método</th>
+                <th style="width:16%">Estado</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join(linhas_tabela) if linhas_tabela else
+             '<tr><td colspan="7" style="text-align:center;padding:20px;color:#94a3b8;">'
+             'Nenhum bloco de planeamento registado.</td></tr>'}
+        </tbody>
+    </table>
+
+    <div class="footer">
+        Industrial Testing Lab — Documento de Circulação Interna — Confidencial
+    </div>
+
+</body>
+</html>"""
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            page.set_content(html, wait_until="networkidle")
+            pdf_bytes = page.pdf(
+                format="A4",
+                landscape=True,
+                margin={"top": "15mm", "right": "12mm", "bottom": "18mm", "left": "12mm"},
+                print_background=True,
+            )
+            browser.close()
+    except Exception as exc:
+        logger.error("Falha ao gerar PDF do planeamento global: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno ao compilar o relatório PDF: {exc}",
+        )
 
     return Response(
-        content=ficheiro_pdf,
+        content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="planeamento-{timestamp}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="Lab_Status_Global_{timestamp_file}.pdf"'},
     )
 
 @app.get("/reservas/por-dia", summary="Reservas de um dia específico com utilizadores")
@@ -2575,71 +3886,10 @@ def criar_reserva(
         data_fim=dados.data_fim,
         notas=dados.notas,
     )
-    equipamento = session.get(Equipamento, dados.equipamento_id)
-    if equipamento:
-        equipamento.estado_atual = EstadoEquipamento.OCUPADO.value
-        session.add(equipamento)
     session.add(reserva)
     _persistir_sessao(session, "Falha ao criar reserva")
     session.refresh(reserva)
     return reserva
-
-
-@app.patch("/reservas/{reserva_id}", summary="Actualizar reserva")
-def atualizar_reserva(
-    reserva_id: int,
-    dados: ReservaUpdate,
-    session: Session = Depends(get_session),
-    utilizador_atual: Utilizador = Depends(exigir_pin_alterado),
-) -> Reserva:
-    reserva = _obter_ou_404(session, Reserva, reserva_id, "Reserva não encontrada")
-    if reserva.utilizador_id != utilizador_atual.id and utilizador_atual.role != RoleUtilizador.ADMIN:
-        raise HTTPException(status_code=403, detail="Só o dono da reserva (ou admin) pode editar")
-
-    atualizacao = dados.model_dump(exclude_unset=True)
-    equipamento_bruto = atualizacao.get("equipamento_id", reserva.equipamento_id)
-    if equipamento_bruto is None:
-        raise HTTPException(status_code=400, detail="O equipamento é obrigatório para actualizar a reserva")
-    equipamento_id = int(equipamento_bruto)
-    data_inicio = atualizacao.get("data_inicio", reserva.data_inicio)
-    data_fim = atualizacao.get("data_fim", reserva.data_fim)
-
-    if data_inicio is None or data_fim is None:
-        raise HTTPException(status_code=400, detail="As datas de início e fim são obrigatórias para actualizar a reserva")
-
-    _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
-    _validar_intervalo_reserva(data_inicio, data_fim)
-    _validar_colisao_reserva(session, equipamento_id, data_inicio, data_fim, reserva_id=reserva.id)
-
-    reserva.equipamento_id = equipamento_id
-    if "projeto" in atualizacao:
-        reserva.projeto = atualizacao.get("projeto")
-    if "data_inicio" in atualizacao:
-        reserva.data_inicio = data_inicio
-    if "data_fim" in atualizacao:
-        reserva.data_fim = data_fim
-    if "notas" in atualizacao:
-        reserva.notas = atualizacao.get("notas")
-
-    session.add(reserva)
-    _persistir_sessao(session, "Falha ao actualizar reserva")
-    session.refresh(reserva)
-    return reserva
-
-@app.delete("/reservas/{reserva_id}", summary="Cancelar reserva")
-def cancelar_reserva(
-    reserva_id: int,
-    session: Session = Depends(get_session),
-    utilizador_atual: Utilizador = Depends(exigir_pin_alterado),
-) -> dict[str, str]:
-    reserva = session.get(Reserva, reserva_id)
-    if not reserva:
-        raise HTTPException(status_code=404, detail="Reserva não encontrada")
-    if reserva.utilizador_id != utilizador_atual.id and utilizador_atual.role != RoleUtilizador.ADMIN:
-        raise HTTPException(status_code=403, detail="Só o dono da reserva (ou admin) pode cancelar")
-    session.delete(reserva)
-    _persistir_sessao(session, "Falha ao cancelar reserva")
-    return {"mensagem": "Reserva cancelada com sucesso"}
 
 # ─────────────────────────────────────────────
 # UTILIZADORES
@@ -2862,11 +4112,10 @@ def oee_summary(
     reservas_periodo = session.exec(
         select(Reserva).where(Reserva.data_inicio >= limite)
     ).all()
+    # Incluir sessões ativas (fim IS NULL) para contabilizar tempo real em curso
     sessoes_periodo = session.exec(
         select(SessaoUso).where(
             SessaoUso.inicio >= limite,
-            SessaoUso.fim.is_not(None),
-            SessaoUso.valida_para_stats == True,
         )
     ).all()
 
@@ -2878,22 +4127,44 @@ def oee_summary(
     for s in sessoes_periodo:
         sessoes_por_eq[s.equipamento_id].append(s)
 
+    # Sessões ativas iniciadas ANTES da janela de análise (equipamentos 'Ocupado' há mais de N dias).
+    # Sem esta segunda query, o numerador (tempo real) seria 0 para equipamentos cujo
+    # check-in ocorreu antes de `limite`, tornando o OEE incorrectamente 0%.
+    sessoes_ativas_pre_periodo = session.exec(
+        select(SessaoUso).where(
+            SessaoUso.fim.is_(None),
+            SessaoUso.inicio < limite,
+        )
+    ).all()
+    for s in sessoes_ativas_pre_periodo:
+        sessoes_por_eq[s.equipamento_id].append(s)
+
     individual: list[dict[str, Any]] = []
     oee_com_dados: list[float] = []
+
+    # Snapshot único para consistência entre equipamentos durante o ciclo
+    agora = _agora_utc()
 
     for eq in equipamentos:
         reservas_eq = reservas_por_eq.get(eq.id, [])
         sessoes_eq = sessoes_por_eq.get(eq.id, [])
 
-        # Tempo_Planeado = soma das durações das reservas no período (segundos)
-        tempo_planeado_s = sum(
-            (r.data_fim - r.data_inicio).total_seconds() for r in reservas_eq
-        )
+        # Janelamento Temporal Dinâmico:
+        # Regra 1 — reserva futura (agora <= inicio): contribui 0 segundos
+        # Regra 2 — reserva em curso (inicio < agora < fim): contribui (agora − inicio)
+        # Regra 3 — reserva concluída (agora >= fim): contribui (fim − inicio) total
+        tempo_planeado_s = 0.0
+        for r in reservas_eq:
+            if agora <= r.data_inicio:
+                continue  # Reserva futura — excluir do denominador
+            planeado = (min(agora, r.data_fim) - r.data_inicio).total_seconds()
+            tempo_planeado_s += max(0.0, planeado)
 
-        # Tempo_Real = soma das durações das sessões de uso concluídas (segundos)
-        tempo_real_s = sum(
-            (s.fim - s.inicio).total_seconds() for s in sessoes_eq if s.fim is not None
-        )
+        # Sessões concluídas usam s.fim; sessões ativas usam `agora` como fim efetivo
+        tempo_real_s = 0.0
+        for s in sessoes_eq:
+            fim_efetivo = s.fim if s.fim is not None else agora
+            tempo_real_s += max(0.0, (fim_efetivo - s.inicio).total_seconds())
 
         oee_pct: float | None = _calcular_oee_temporal(tempo_real_s, tempo_planeado_s)
         if oee_pct is not None:
@@ -2914,6 +4185,7 @@ def oee_summary(
             "tempo_planeado_h": round(tempo_planeado_s / 3600, 2),
             "tempo_real_h": round(tempo_real_s / 3600, 2),
             "total_reservas": len(reservas_eq),
+            "tem_sessao_ativa": any(s.fim is None for s in sessoes_eq),
         })
 
     # Média global: sobre valores já limitados a 100% (overruns não inflacionam)
@@ -2927,6 +4199,78 @@ def oee_summary(
         "qualidade_global": 100.0,
         "individual": individual,
     }
+
+
+@app.get("/stats/oee_historico", summary="OEE agregado por dia para gráfico de tendência")
+def oee_historico(
+    dias: int = 30,
+    session: Session = Depends(get_session),
+    _: Utilizador = Depends(obter_utilizador_atual),
+) -> list[dict[str, Any]]:
+    """
+    OEE diário dos últimos N dias (máx 90) para o gráfico de tendência do Dashboard.
+
+    Cada ponto representa um dia com pelo menos uma reserva com tempo planeado > 0.
+    Dias sem reservas iniciadas são omitidos para não gerar pontos zero falsos.
+    Janelamento temporal aplicado: para dias passados min(agora, fim) = fim;
+    para o dia atual, a reserva em curso contribui apenas com o tempo decorrido.
+    """
+    dias = _validar_dias(dias)
+    dias = min(dias, 90)
+    agora = _agora_utc()
+    limite = agora - timedelta(days=dias)
+
+    reservas_periodo = session.exec(
+        select(Reserva).where(Reserva.data_inicio >= limite)
+    ).all()
+    sessoes_periodo = session.exec(
+        select(SessaoUso).where(
+            SessaoUso.inicio >= limite,
+        )
+    ).all()
+
+    # Agrupar por dia UTC com base na data de início
+    reservas_por_dia: dict = defaultdict(list)
+    for r in reservas_periodo:
+        reservas_por_dia[r.data_inicio.date()].append(r)
+
+    sessoes_por_dia: dict = defaultdict(list)
+    for s in sessoes_periodo:
+        sessoes_por_dia[s.inicio.date()].append(s)
+
+    resultado: list[dict[str, Any]] = []
+
+    for dia, reservas_dia in sorted(reservas_por_dia.items()):
+        sessoes_dia = sessoes_por_dia.get(dia, [])
+
+        # Janelamento temporal: reservas futuras dentro do dia contribuem 0 s
+        tempo_planeado_s = 0.0
+        for r in reservas_dia:
+            if agora <= r.data_inicio:
+                continue
+            planeado = (min(agora, r.data_fim) - r.data_inicio).total_seconds()
+            tempo_planeado_s += max(0.0, planeado)
+
+        if tempo_planeado_s <= 0:
+            continue  # Omitir dias sem tempo planeado — evita pontos zero falsos
+
+        tempo_real_s = 0.0
+        for s in sessoes_dia:
+            fim_efetivo = s.fim if s.fim is not None else agora
+            tempo_real_s += max(0.0, (fim_efetivo - s.inicio).total_seconds())
+
+        oee_pct = _calcular_oee_temporal(tempo_real_s, tempo_planeado_s)
+        if oee_pct is None:
+            continue
+
+        resultado.append({
+            "data": dia.isoformat(),
+            "oee_pct": oee_pct,
+            "tempo_planeado_h": round(tempo_planeado_s / 3600, 2),
+            "tempo_real_h": round(tempo_real_s / 3600, 2),
+        })
+
+    return resultado
 
 
 @app.post("/admin/stats/limpar-sessoes-invalidas", summary="Marcar sessões históricas inválidas para OEE")
@@ -3007,6 +4351,10 @@ def oee_equipamento(
     Fórmula: OEE = min(Tempo_Real / Tempo_Planeado, 1) × 100
     Usando _calcular_oee_temporal — mesma lógica do /stats/oee_summary.
 
+    Inclui sessões ativas (fim IS NULL) para que o OEE suba em tempo real
+    enquanto o equipamento está em uso. A sessão ativa contribui com o tempo
+    decorrido desde o seu início até ao momento do pedido (snapshot `agora`).
+
     Também devolve taxa_sucesso_planeamento_pct (reservas concluídas / total),
     que é uma métrica complementar de qualidade do planeamento, distinta do OEE.
 
@@ -3019,6 +4367,8 @@ def oee_equipamento(
     """
     dias = _validar_dias(dias)
     limite = _agora_utc() - timedelta(days=dias)
+    # Snapshot único para consistência entre denominador e numerador
+    agora = _agora_utc()
 
     eq = _obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
 
@@ -3029,20 +4379,43 @@ def oee_equipamento(
         )
     ).all()
 
-    sessoes = session.exec(
+    # Incluir sessões ativas (fim IS NULL) para contabilizar tempo real em curso
+    sessoes = list(session.exec(
         select(SessaoUso).where(
             SessaoUso.equipamento_id == equipamento_id,
             SessaoUso.inicio >= limite,
-            SessaoUso.fim.is_not(None),
         )
-    ).all()
+    ).all())
 
-    tempo_planeado_s = sum(
-        (r.data_fim - r.data_inicio).total_seconds() for r in reservas
-    )
-    tempo_real_s = sum(
-        (s.fim - s.inicio).total_seconds() for s in sessoes if s.fim is not None
-    )
+    # Sessão ativa iniciada antes da janela de análise (check-in há mais de N dias)
+    sessao_pre = session.exec(
+        select(SessaoUso).where(
+            SessaoUso.equipamento_id == equipamento_id,
+            SessaoUso.fim.is_(None),
+            SessaoUso.inicio < limite,
+        )
+    ).first()
+    if sessao_pre is not None:
+        sessoes.append(sessao_pre)
+
+    # Janelamento temporal: reservas futuras contribuem 0; reservas em curso contribuem
+    # apenas o tempo já decorrido, não o tempo planeado total.
+    tempo_planeado_s = 0.0
+    for r in reservas:
+        if agora <= r.data_inicio:
+            continue  # Reserva futura — excluir do denominador
+        planeado = (min(agora, r.data_fim) - r.data_inicio).total_seconds()
+        tempo_planeado_s += max(0.0, planeado)
+
+    # Sessões concluídas usam s.fim; sessões ativas usam `agora` como fim efetivo
+    tempo_real_s = 0.0
+    for s in sessoes:
+        try:
+            fim_efetivo = s.fim if s.fim is not None else agora
+            tempo_real_s += max(0.0, (fim_efetivo - s.inicio).total_seconds())
+        except (TypeError, ValueError):
+            # Protecção contra datas malformadas na base de dados
+            continue
 
     oee_pct = _calcular_oee_temporal(tempo_real_s, tempo_planeado_s)
 
@@ -3064,3 +4437,5 @@ def oee_equipamento(
         "periodo_dias": dias,
         "desde": _iso_z(limite),
     }
+
+

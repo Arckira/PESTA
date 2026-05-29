@@ -84,13 +84,39 @@ def calcular_proxima_data(
 
 
 class EstadoEquipamento(str, Enum):
-    """Estados operacionais unificados para clarificar a operação na Industrial Testing Lab."""
+    """Estados operacionais unificados para clarificar a operação na Industrial Testing Lab.
+
+    Porquê: separar 'Avariado' de 'Limitado' permite ao sistema distinguir
+    equipamentos completamente imobilizados (bloqueiam check-in e penalizam
+    Disponibilidade no OEE) de equipamentos com falhas menores não-bloqueantes
+    (permitem check-in em modo de precaução, protegendo a métrica de OEE).
+    """
 
     DISPONIVEL = "Disponível"
     OCUPADO = "Ocupado"
     AVARIADO = "Avariado"
+    # Novo estado para avarias não-bloqueantes — equipamento operável com restrições
+    DEGRADADO = "Degradado"
     MANUTENCAO = "Em manutenção"
     CALIBRACAO = "Em calibração"
+
+
+class SeveridadeAvaria(str, Enum):
+    """Classifica o impacto operacional de uma avaria registada num equipamento.
+
+    Porquê: a distinção entre severidade BLOQUEANTE e ALERTA é o núcleo do
+    requisito de Modo Limitado. Persisti-la como Enum garante que:
+      1. A API rejeita valores inválidos antes de chegarem à base de dados.
+      2. A máquina de estados em main.py pode derivar o estado-destino do
+         equipamento sem condições de texto frágeis dispersas no código.
+      3. A documentação automática (OpenAPI/Swagger) expõe os valores válidos
+         aos integradores sem necessidade de consultar o código-fonte.
+    """
+
+    BLOQUEANTE = "BLOQUEANTE"
+    # Avaria grave — transita o equipamento para 'Avariado'; check-in bloqueado
+    ALERTA = "ALERTA"
+    # Avaria menor — transita o equipamento para 'Limitado'; check-in permitido
 
 
 def normalizar_estado_equipamento(estado: Optional[str]) -> str:
@@ -260,6 +286,13 @@ class Avaria(UTCModel, table=True):
     custo_reparacao: Optional[float] = Field(default=None, sa_column=Column("custo_reparacao", Float, nullable=True))
     empresa_externa: Optional[str] = Field(default=None, sa_column=Column(String(150), nullable=True))
     num_sc_po: Optional[str] = Field(default=None, sa_column=Column(String(100), nullable=True))
+    # Porquê: o default 'BLOQUEANTE' garante comportamento conservador para registos
+    # antigos importados do Excel ou criados antes desta migração — nunca assumir que
+    # uma avaria legada é não-bloqueante, pois isso poderia ocultar imobilizações reais.
+    severidade: str = Field(
+        default=SeveridadeAvaria.BLOQUEANTE.value,
+        sa_column=Column("severidade", String(20), nullable=False),
+    )
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="avarias")
     reportado_por: Optional[Utilizador] = Relationship(back_populates="avarias_reportadas")
@@ -290,6 +323,7 @@ class Manutencao(UTCModel, table=True):
         # Porquê: rastreabilidade financeira para justificar investimentos
         # ou comparar custo acumulado vs. substituição do equipamento.
     )
+    fornecedor: Optional[str] = Field(default=None, sa_column=Column(String(150), nullable=True))
     referencia_sc_po: Optional[str] = Field(
         default=None,
         sa_column=Column(String(100)),
@@ -320,6 +354,8 @@ class Calibracao(UTCModel, table=True):
     proxima_data: Optional[datetime] = Field(default=None, sa_column=Column(UTCDateTime(), index=True))
     certificado_url: Optional[str] = Field(default=None, sa_column=Column(String(500)))
     observacoes: Optional[str] = Field(default=None)
+    custo_eur: Optional[float] = Field(default=None, sa_column=Column("custo_eur", Float, nullable=True))
+    fornecedor: Optional[str] = Field(default=None, sa_column=Column(String(150), nullable=True))
     criado_em: datetime = Field(default_factory=utc_now, sa_column=Column(UTCDateTime(), nullable=False))
 
     equipamento: Optional[Equipamento] = Relationship(back_populates="calibracoes")
@@ -542,37 +578,42 @@ def calcular_proxima_data_calibracao(mapper, connection, target) -> None:
 
 
 @event.listens_for(Avaria, "after_insert")
-def marcar_equipamento_como_avariado(mapper, connection, target) -> None:
-    """Força o estado do equipamento para Avariado após registo de avaria.
+def marcar_estado_equipamento_por_severidade(mapper, connection, target) -> None:
+    """Transita o estado do equipamento consoante a severidade da avaria registada.
 
-    Porque: a atualizacao no proprio evento ORM garante consistencia mesmo
-    quando a avaria e criada por script, API ou futuras tarefas agendadas.
+    Porquê: centralizar esta lógica no evento ORM (em vez do endpoint da API)
+    garante que a transição de estado é sempre executada, independentemente do
+    caminho de código que cria a avaria — API, scripts de migração, ou tarefas
+    agendadas futuras. É o único ponto de verdade para esta regra de negócio.
+
+    Regras:
+      - BLOQUEANTE → estado 'Avariado'  (comportamento original preservado)
+    - ALERTA      → estado 'Limitado' (novo: permite check-in com precaução)
+      - Valor desconhecido → tratado como BLOQUEANTE (princípio de falha segura)
     """
 
     del mapper
+
+    # Determinar o estado de destino com base na severidade persistida.
+    # Usamos comparação de string em vez de instância Enum para ser resiliente
+    # a valores que possam vir de migrações de dados externas.
+    if target.severidade == SeveridadeAvaria.ALERTA.value:
+        estado_destino = EstadoEquipamento.DEGRADADO.value
+    else:
+        # Princípio de falha segura: qualquer severidade desconhecida ou BLOQUEANTE
+        # força o equipamento para 'Avariado', nunca para um estado mais permissivo.
+        estado_destino = EstadoEquipamento.AVARIADO.value
+
     connection.execute(
         update(Equipamento)
         .where(Equipamento.id == target.equipamento_id)
         .values(
-            estado_atual=EstadoEquipamento.AVARIADO.value,
+            estado_atual=estado_destino,
             atualizado_em=utc_now(),
         )
     )
 
 
-@event.listens_for(Reserva, "after_insert")
-def marcar_equipamento_como_ocupado_por_reserva(mapper, connection, target) -> None:
-    """Força o estado do equipamento para Ocupado quando a reserva é criada."""
-
-    del mapper
-    connection.execute(
-        update(Equipamento)
-        .where(Equipamento.id == target.equipamento_id)
-        .values(
-            estado_atual=EstadoEquipamento.OCUPADO.value,
-            atualizado_em=utc_now(),
-        )
-    )
 
 
 @event.listens_for(SessaoUso, "after_insert")
@@ -613,7 +654,10 @@ def criar_avaria_se_transitou_para_avariado(mapper, connection, target) -> None:
     antigo_norm = normalizar_estado_equipamento(antigo)
     novo_norm = normalizar_estado_equipamento(novo)
 
-    # Criar AVARIA apenas quando houver uma transição para 'Avariado'
+    # Criar AVARIA apenas quando houver uma transição para 'Avariado'.
+    # Nota: transições para 'Limitado' não disparam este evento porque a avaria
+    # ALERTA já foi criada explicitamente pelo endpoint — o evento after_insert
+    # da própria Avaria trata a transição de estado nesse caso.
     if novo_norm == EstadoEquipamento.AVARIADO.value and antigo_norm != EstadoEquipamento.AVARIADO.value:
         # Se já foi registada manualmente uma avaria nesta mesma transação, não duplicar
         if getattr(target, "_avaria_manual_registada", False):
