@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
-from sqlalchemy import Column, Index, String, Text, event
+from sqlalchemy import Column, Index, Integer, String, Text, event
 from sqlalchemy.orm import relationship
 from sqlmodel import Field, Relationship
 
@@ -38,6 +38,10 @@ class Manutencao(UTCModel, table=True):
     custo_eur: Optional[float] = Field(default=None)
     referencia_sc_po: Optional[str] = Field(default=None, sa_column=Column(String(100)))
     observacoes_externas: Optional[str] = Field(default=None)
+    caminho_anexo: Optional[str] = Field(default=None, sa_column=Column(String(500), nullable=True))
+    fornecedor: Optional[str] = Field(default=None, sa_column=Column(String(150), nullable=True))
+    fornecedor_id: Optional[int] = Field(default=None, sa_column=Column("fornecedor_id", Integer, nullable=True))
+    origem_avaria_id: Optional[int] = Field(default=None, sa_column=Column("origem_avaria_id", Integer, nullable=True, index=True))
 
     equipamento: Optional["Equipamento"] = Relationship(
         back_populates="manutencoes",

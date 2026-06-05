@@ -1,0 +1,52 @@
+import { useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext.jsx'
+import { useLanguage } from '../contexts/useLanguage.js'
+import { getPostLoginPath, LOGIN_PATH } from '../contexts/authNavigation.js'
+
+const cardStyle = {
+  maxWidth: '560px',
+  margin: '48px auto',
+  padding: '28px 32px',
+  border: '1px solid var(--border)',
+  borderRadius: '18px',
+  background: 'linear-gradient(135deg, rgba(255,255,255,0.94), rgba(246,247,251,0.98))',
+  boxShadow: '0 18px 36px rgba(15, 23, 42, 0.08)',
+}
+
+export default function Login() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { user } = useAuth()
+  const { t } = useLanguage()
+
+  useEffect(() => {
+    if (user) {
+      const from = location.state?.from
+      navigate(from || getPostLoginPath(user), { replace: true })
+    }
+  }, [navigate, user, location.state])
+
+  useEffect(() => {
+    if (user) return
+
+    window.history.pushState({ labLoginLock: true }, '', window.location.href)
+
+    const handlePopState = () => {
+      navigate(LOGIN_PATH, { replace: true, state: location.state })
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [location.state, navigate, user])
+
+  return (
+    <section style={cardStyle}>
+      <div className="label">{t('auth.title')}</div>
+      <h1 className="text-base font-bold text-gray-800 tracking-wide uppercase">{t('auth.enterPin')}</h1>
+      <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
+        {t('auth.pinRequired')}
+      </p>
+    </section>
+  )
+}

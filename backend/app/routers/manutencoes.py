@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlmodel import Session, select
 
 from app.core.deps import obter_utilizador_opcional
@@ -21,6 +24,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["manutencoes"])
 
+_UPLOADS_MANUTENCOES = Path(__file__).resolve().parents[2] / "uploads" / "manutencoes"
+_TAMANHO_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+_EXTENSOES_PERMITIDAS = {".pdf", ".png", ".jpg", ".jpeg"}
+
+
+def _parse_dt(valor: str, campo: str) -> datetime:
+    """Converte string ISO 8601 (incluindo sufixo Z) em datetime."""
+    try:
+        return datetime.fromisoformat(valor.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"'{campo}' inválido — use formato ISO 8601.") from exc
+
 
 @router.get("/equipamentos/{equipamento_id}/manutencoes")
 def listar_manutencoes(equipamento_id: int, session: Session = Depends(get_session)):
@@ -32,26 +47,65 @@ def listar_manutencoes(equipamento_id: int, session: Session = Depends(get_sessi
 
 
 @router.post("/equipamentos/{equipamento_id}/manutencao")
-def registar_manutencao(
+async def registar_manutencao(
     equipamento_id: int,
-    dados: ManutencaoCreate,
+    descricao: str = Form(...),
+    data_realizada: str = Form(...),
+    proxima_data: Optional[str] = Form(None),
+    periodicidade_dias: Optional[int] = Form(None),
+    executado_por_id: Optional[int] = Form(None),
+    tipo_intervencao: Optional[str] = Form(None),
+    custo_eur: Optional[float] = Form(None),
+    referencia_sc_po: Optional[str] = Form(None),
+    observacoes_externas: Optional[str] = Form(None),
+    fornecedor: Optional[str] = Form(None),
+    fornecedor_id: Optional[int] = Form(None),
+    ficheiro: Optional[UploadFile] = File(None),
     session: Session = Depends(get_session),
     utilizador: Optional[Utilizador] = Depends(obter_utilizador_opcional),
 ) -> dict[str, Any]:
     garantir_colunas_manutencoes()
     _ = utilizador
+
+    dt_realizada = _parse_dt(data_realizada, "data_realizada")
+    dt_proxima = _parse_dt(proxima_data, "proxima_data") if proxima_data else None
+
+    caminho_anexo: Optional[str] = None
+    if ficheiro and ficheiro.filename:
+        ext = Path(ficheiro.filename).suffix.lower()
+        if ext not in _EXTENSOES_PERMITIDAS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Tipo de ficheiro não permitido. Use: {', '.join(sorted(_EXTENSOES_PERMITIDAS))}",
+            )
+        conteudo = await ficheiro.read()
+        if len(conteudo) > _TAMANHO_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Ficheiro demasiado grande. Limite: 10 MB")
+        _UPLOADS_MANUTENCOES.mkdir(parents=True, exist_ok=True)
+        nome_ficheiro = f"manutencao_{equipamento_id}_{uuid.uuid4().hex}{ext}"
+        destino = _UPLOADS_MANUTENCOES / nome_ficheiro
+        try:
+            destino.write_bytes(conteudo)
+        except OSError as exc:
+            logger.error("Falha ao guardar anexo da manutenção eq=%d: %s", equipamento_id, exc)
+            raise HTTPException(status_code=500, detail="Não foi possível guardar o ficheiro anexo")
+        caminho_anexo = f"/uploads/manutencoes/{nome_ficheiro}"
+
     eq = obter_ou_404(session, Equipamento, equipamento_id, "Equipamento não encontrado")
     manutencao = Manutencao(
         equipamento_id=equipamento_id,
-        descricao=dados.descricao,
-        data_realizada=dados.data_realizada,
-        periodicidade_dias=dados.periodicidade_dias,
-        proxima_data=dados.proxima_data,
-        executado_por_id=dados.executado_por_id,
-        tipo_intervencao=dados.tipo_intervencao,
-        custo_eur=dados.custo_eur,
-        referencia_sc_po=dados.referencia_sc_po,
-        observacoes_externas=dados.observacoes_externas,
+        descricao=descricao,
+        data_realizada=dt_realizada,
+        periodicidade_dias=periodicidade_dias,
+        proxima_data=dt_proxima,
+        executado_por_id=executado_por_id,
+        tipo_intervencao=tipo_intervencao or None,
+        custo_eur=custo_eur,
+        referencia_sc_po=referencia_sc_po or None,
+        observacoes_externas=observacoes_externas or None,
+        caminho_anexo=caminho_anexo,
+        fornecedor=fornecedor or None,
+        fornecedor_id=fornecedor_id,
     )
     eq.estado_atual = EstadoEquipamento.MANUTENCAO.value
     session.add(manutencao)

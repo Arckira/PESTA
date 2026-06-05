@@ -102,6 +102,7 @@ def _garantir_coluna_mssql(connection, tabela: str, coluna: str, definicao: str)
 _sessaouso_migrada = False
 _avarias_migrada = False
 _manutencoes_migrada = False
+_fornecedores_migrada = False
 
 
 def garantir_colunas_sessaouso() -> None:
@@ -138,6 +139,7 @@ def garantir_colunas_avarias() -> None:
         tipo_texto_150 = "NVARCHAR(150)" if IS_MSSQL else "VARCHAR(150)"
         tipo_texto_100 = "NVARCHAR(100)" if IS_MSSQL else "VARCHAR(100)"
         tipo_texto_20 = "NVARCHAR(20)" if IS_MSSQL else "VARCHAR(20)"
+        tipo_texto_500 = "NVARCHAR(500)" if IS_MSSQL else "VARCHAR(500)"
         with engine.begin() as conn:
             _garantir_coluna_mssql(conn, "Avarias", "custo_reparacao", f"{tipo_float} NULL")
             _garantir_coluna_mssql(conn, "Avarias", "empresa_externa", f"{tipo_texto_150} NULL")
@@ -148,6 +150,7 @@ def garantir_colunas_avarias() -> None:
                 "severidade",
                 f"{tipo_texto_20} NOT NULL DEFAULT '{SeveridadeAvaria.BLOQUEANTE.value}'",
             )
+            _garantir_coluna_mssql(conn, "Avarias", "caminho_anexo", f"{tipo_texto_500} NULL")
         _avarias_migrada = True
         logger.info("Colunas Avarias garantidas.")
     except Exception:
@@ -159,19 +162,42 @@ def garantir_colunas_manutencoes() -> None:
     if _manutencoes_migrada:
         return
     try:
+        tipo_int = "INT" if IS_MSSQL else "INTEGER"
         tipo_texto_60 = "NVARCHAR(60)" if IS_MSSQL else "VARCHAR(60)"
+        tipo_texto_150 = "NVARCHAR(150)" if IS_MSSQL else "VARCHAR(150)"
         tipo_float = "FLOAT" if IS_MSSQL else "REAL"
         tipo_texto_100 = "NVARCHAR(100)" if IS_MSSQL else "VARCHAR(100)"
         tipo_texto_longo = "NVARCHAR(MAX)" if IS_MSSQL else "TEXT"
+        tipo_texto_500 = "NVARCHAR(500)" if IS_MSSQL else "VARCHAR(500)"
         with engine.begin() as conn:
             _garantir_coluna_mssql(conn, "Manutencoes", "tipo_intervencao", f"{tipo_texto_60} NULL")
             _garantir_coluna_mssql(conn, "Manutencoes", "custo_eur", f"{tipo_float} NULL")
             _garantir_coluna_mssql(conn, "Manutencoes", "referencia_sc_po", f"{tipo_texto_100} NULL")
             _garantir_coluna_mssql(conn, "Manutencoes", "observacoes_externas", f"{tipo_texto_longo} NULL")
+            _garantir_coluna_mssql(conn, "Manutencoes", "caminho_anexo", f"{tipo_texto_500} NULL")
+            _garantir_coluna_mssql(conn, "Manutencoes", "fornecedor", f"{tipo_texto_150} NULL")
+            _garantir_coluna_mssql(conn, "Manutencoes", "fornecedor_id", f"{tipo_int} NULL")
+            _garantir_coluna_mssql(conn, "Manutencoes", "origem_avaria_id", f"{tipo_int} NULL")
         _manutencoes_migrada = True
         logger.info("Colunas Manutencoes garantidas.")
     except Exception:
         logger.warning("Não foi possível garantir colunas Manutencoes — re-tentada na próxima chamada.")
+
+
+def garantir_tabela_fornecedores() -> None:
+    global _fornecedores_migrada
+    if _fornecedores_migrada:
+        return
+    try:
+        from app.models.fornecedor import Fornecedor  # evitar importação circular no topo
+        tipo_int = "INT" if IS_MSSQL else "INTEGER"
+        SQLModel.metadata.create_all(engine, tables=[Fornecedor.__table__])
+        with engine.begin() as conn:
+            _garantir_coluna_mssql(conn, "Manutencoes", "fornecedor_id", f"{tipo_int} NULL")
+        _fornecedores_migrada = True
+        logger.info("Tabela Fornecedores e coluna Manutencoes.fornecedor_id garantidas.")
+    except Exception:
+        logger.warning("Não foi possível garantir tabela Fornecedores — re-tentada na próxima chamada.")
 
 
 def validar_ligacao() -> None:

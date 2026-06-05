@@ -46,6 +46,9 @@ class Avaria(UTCModel, table=True):
         default=SeveridadeAvaria.BLOQUEANTE.value,
         sa_column=Column("severidade", String(20), nullable=False),
     )
+    caminho_anexo: Optional[str] = Field(
+        default=None, sa_column=Column(String(500), nullable=True)
+    )
 
     equipamento: Optional["Equipamento"] = Relationship(
         back_populates="avarias",

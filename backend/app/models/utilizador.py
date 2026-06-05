@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
-from sqlalchemy import Column, Index, String
+from sqlalchemy import Column, Index, String, event
 from sqlalchemy.orm import relationship
 from sqlmodel import Field, Relationship
 
@@ -69,3 +69,9 @@ class Utilizador(UTCModel, table=True):
         back_populates="carregado_por",
         sa_relationship=relationship("DocumentacaoEquipamento", back_populates="carregado_por"),
     )
+
+
+@event.listens_for(Utilizador, "load")
+def _coerce_role_utilizador(target, context) -> None:
+    if isinstance(target.role, str):
+        target.role = RoleUtilizador(target.role)

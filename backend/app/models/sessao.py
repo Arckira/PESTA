@@ -74,6 +74,12 @@ class SessaoAuth(UTCModel, table=True):
     )
 
 
+@event.listens_for(SessaoAuth, "load")
+def _coerce_role_sessao_auth(target, context) -> None:
+    if isinstance(target.role, str):
+        target.role = RoleUtilizador(target.role)
+
+
 @event.listens_for(SessaoUso, "after_insert")
 def marcar_equipamento_como_ocupado_por_ensaio(mapper, connection, target) -> None:
     """Força o estado do equipamento para Ocupado quando o ensaio começa."""

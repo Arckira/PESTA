@@ -61,7 +61,7 @@ class EstadoEquipamento(str, Enum):
     DISPONIVEL = "Disponível"
     OCUPADO = "Ocupado"
     AVARIADO = "Avariado"
-    DEGRADADO = "Degradado"
+    DEGRADADO = "Limitado"
     MANUTENCAO = "Em manutenção"
     CALIBRACAO = "Em calibração"
 

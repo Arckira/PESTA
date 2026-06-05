@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 _LOGO_BASE64: str = ""
 try:
     _logo_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "legacy-frontend", "src", "assets", "industrial-testing-lab-logo.png"
+        os.path.dirname(__file__), "..", "..", "..", "Frontend", "src", "assets", "industrial-testing-lab-logo.png"
     )
     with open(_logo_path, "rb") as _f:
         _LOGO_BASE64 = base64.b64encode(_f.read()).decode("ascii")

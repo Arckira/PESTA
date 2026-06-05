@@ -12,6 +12,8 @@ try:
         CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
         ACCESS_TOKEN_EXPIRE_MINUTES: int = 600
         SQL_ECHO: bool = False
+        DB_POOL_SIZE: int = 20
+        DB_MAX_OVERFLOW: int = 10
 
         model_config = SettingsConfigDict(
             env_file=str(Path(__file__).resolve().parents[2] / ".env"),
@@ -45,13 +47,22 @@ except ImportError:
 
     class Settings(BaseModel):  # type: ignore[no-redef]
         DATABASE_URL: str = _env.get("DATABASE_URL", os.getenv("DATABASE_URL", ""))
-        CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+        CORS_ORIGINS: list[str] = [
+            o.strip()
+            for o in _env.get(
+                "CORS_ORIGINS",
+                os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"),
+            ).split(",")
+            if o.strip()
+        ]
         ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
             _env.get("ACCESS_TOKEN_EXPIRE_MINUTES", os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "600"))
         )
         SQL_ECHO: bool = (
             _env.get("SQL_ECHO", os.getenv("SQL_ECHO", "false")).strip().lower() == "true"
         )
+        DB_POOL_SIZE: int = int(_env.get("DB_POOL_SIZE", os.getenv("DB_POOL_SIZE", "20")))
+        DB_MAX_OVERFLOW: int = int(_env.get("DB_MAX_OVERFLOW", os.getenv("DB_MAX_OVERFLOW", "10")))
 
 
 settings = Settings()

@@ -16,8 +16,8 @@ env/
 *.sqlite3
 
 # Node / Vite
-legacy-frontend/node_modules/
-legacy-frontend/dist/
+Frontend/node_modules/
+Frontend/dist/
 
 # Logs and OS files
 *.log

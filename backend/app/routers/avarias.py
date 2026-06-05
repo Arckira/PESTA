@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlmodel import Session, select
 
 from app.core.deps import exigir_admin, obter_utilizador_opcional
@@ -11,6 +13,7 @@ from app.db.database import get_session, garantir_colunas_avarias
 from app.models.avaria import Avaria
 from app.models.base import EstadoEquipamento, SeveridadeAvaria, normalizar_estado_equipamento
 from app.models.equipamento import Equipamento
+from app.models.manutencao import Manutencao
 from app.models.utilizador import Utilizador
 from app.schemas.avaria import AvariaCreate, AvariaResolve
 from app.services.auth_service import agora_utc, obter_ou_404, persistir_sessao
@@ -19,6 +22,10 @@ from app.services.pdf_service import gerar_pdf_playwright, html_relatorio
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["avarias"])
+
+_UPLOADS_AVARIAS = Path(__file__).resolve().parents[2] / "uploads" / "avarias"
+_TAMANHO_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+_EXTENSOES_PERMITIDAS = {".pdf", ".png", ".jpg", ".jpeg"}
 
 
 @router.get("/equipamentos/{equipamento_id}/avarias")
@@ -53,7 +60,12 @@ def registar_avaria(
     return {"mensagem": "Avaria registada com sucesso", "estado_atual": eq.estado_atual, "avaria": avaria}
 
 
-def _resolver_avaria_logica(avaria_id: int, dados: AvariaResolve, session: Session) -> dict[str, Any]:
+def _resolver_avaria_logica(
+    avaria_id: int,
+    dados: AvariaResolve,
+    session: Session,
+    caminho_anexo: Optional[str] = None,
+) -> dict[str, Any]:
     avaria = session.get(Avaria, avaria_id)
     if not avaria:
         raise HTTPException(status_code=404, detail="Avaria não encontrada")
@@ -66,6 +78,8 @@ def _resolver_avaria_logica(avaria_id: int, dados: AvariaResolve, session: Sessi
         avaria.notas_resolucao = dados.relatorio_tecnico
     if dados.custo is not None:
         avaria.custo_reparacao = dados.custo
+    if caminho_anexo:
+        avaria.caminho_anexo = caminho_anexo
 
     outras_bloqueantes = session.exec(
         select(Avaria).where(
@@ -99,9 +113,30 @@ def _resolver_avaria_logica(avaria_id: int, dados: AvariaResolve, session: Sessi
             session.add(eq)
 
     session.add(avaria)
+
+    manutencao_corretiva = Manutencao(
+        equipamento_id=avaria.equipamento_id,
+        descricao=(
+            f"[Resolução de avaria AV-{avaria.id:03d}] "
+            + (dados.relatorio_tecnico or avaria.descricao or "Intervenção corretiva")
+        )[:1000],
+        data_realizada=agora_utc(),
+        tipo_intervencao="Corretiva",
+        custo_eur=dados.custo if dados.custo is not None else avaria.custo_reparacao,
+        referencia_sc_po=avaria.num_sc_po,
+        observacoes_externas=f"Criado automaticamente pela resolução da avaria AV-{avaria.id:03d}.",
+        origem_avaria_id=avaria.id,
+    )
+    session.add(manutencao_corretiva)
+
     persistir_sessao(session, "Falha ao resolver avaria")
     session.refresh(avaria)
-    return {"mensagem": "Avaria resolvida com sucesso", "avaria": avaria}
+    session.refresh(manutencao_corretiva)
+    return {
+        "mensagem": "Avaria resolvida com sucesso. Manutenção corretiva criada automaticamente.",
+        "avaria": avaria,
+        "manutencao_criada": manutencao_corretiva,
+    }
 
 
 @router.patch("/avarias/{avaria_id}/resolver")
@@ -116,14 +151,39 @@ def resolver_avaria(
 
 
 @router.put("/avarias/{avaria_id}/resolver")
-def resolver_avaria_put(
+async def resolver_avaria_put(
     avaria_id: int,
-    dados: AvariaResolve,
+    relatorio_tecnico: Optional[str] = Form(None),
+    custo: Optional[float] = Form(None),
+    ficheiro: Optional[UploadFile] = File(None),
     session: Session = Depends(get_session),
     admin: Utilizador = Depends(exigir_admin),
 ) -> dict[str, Any]:
     _ = admin
-    return _resolver_avaria_logica(avaria_id, dados, session)
+
+    caminho_anexo: Optional[str] = None
+    if ficheiro and ficheiro.filename:
+        ext = Path(ficheiro.filename).suffix.lower()
+        if ext not in _EXTENSOES_PERMITIDAS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Tipo de ficheiro não permitido. Use: {', '.join(sorted(_EXTENSOES_PERMITIDAS))}",
+            )
+        conteudo = await ficheiro.read()
+        if len(conteudo) > _TAMANHO_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Ficheiro demasiado grande. Limite: 10 MB")
+        _UPLOADS_AVARIAS.mkdir(parents=True, exist_ok=True)
+        nome_ficheiro = f"avaria_{avaria_id}_{uuid.uuid4().hex}{ext}"
+        destino = _UPLOADS_AVARIAS / nome_ficheiro
+        try:
+            destino.write_bytes(conteudo)
+        except OSError as exc:
+            logger.error("Falha ao guardar anexo da avaria %d: %s", avaria_id, exc)
+            raise HTTPException(status_code=500, detail="Não foi possível guardar o ficheiro anexo")
+        caminho_anexo = f"/uploads/avarias/{nome_ficheiro}"
+
+    dados = AvariaResolve(relatorio_tecnico=relatorio_tecnico, custo=custo)
+    return _resolver_avaria_logica(avaria_id, dados, session, caminho_anexo=caminho_anexo)
 
 
 @router.get("/avarias")
