@@ -49,5 +49,5 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Claude Code local (machine-specific) settings
-.claude/settings.local.json
+# Local AI coding assistant configuration (machine/developer-specific)
+.claude/
