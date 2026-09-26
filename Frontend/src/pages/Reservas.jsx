@@ -25,6 +25,8 @@ import styles from './Reservas.module.css'
 import { useReservas } from '../hooks/useReservas.js'
 import { corDoUtilizador } from '../utils/coresUtilizadores.js'
 
+const ESTADOS_BLOQUEADOS_RESERVA = ['Avariado', 'Em manutenção', 'Em calibração']
+
 const holidayKeyCache = new Map()
 
 const pad = (value) => String(value).padStart(2, '0')
@@ -164,7 +166,7 @@ export default function Reservas({startOpenModal = false}) {
 
   const tipoLabel = useCallback((tipo) => {
     const mapa = {
-      'Câmara Climática':      lang === 'en' ? 'Climate Chamber'       : 'Câmara Climática',
+      'Câmara Climática':      lang === 'en' ? 'Climatic Chamber'      : 'Câmara Climática',
       'Câmara Choque Térmico': lang === 'en' ? 'Thermal Shock Chamber' : 'Câmara Choque Térmico',
       'Forno':                 lang === 'en' ? 'Oven'                  : 'Forno',
       'Salina':                lang === 'en' ? 'Salt Spray'            : 'Salina',
@@ -188,6 +190,7 @@ export default function Reservas({startOpenModal = false}) {
         id: String(eq.id),
         title: eq.codigo ? `${eq.codigo} — ${eq.nome}` : eq.nome,
         tipo: tipoLabel(eq.tipo || 'Outros'),
+        estadoBloqueado: ESTADOS_BLOQUEADOS_RESERVA.includes(eq.estado_atual),
       }))
   }, [equipamentos, lang, tipoLabel])
 
@@ -415,8 +418,14 @@ export default function Reservas({startOpenModal = false}) {
           events={eventos}
           dateClick={handleDateClick}
           selectable
+          selectAllow={(selectInfo) => !selectInfo.resource?.extendedProps?.estadoBloqueado}
           select={handleTimeSelect}
           selectMirror
+          resourceLaneClassNames={(arg) => arg.resource.extendedProps.estadoBloqueado ? [styles.resourceBloqueado] : []}
+          resourceLabelClassNames={(arg) => arg.resource.extendedProps.estadoBloqueado ? [styles.resourceBloqueado] : []}
+          resourceLabelDidMount={(arg) => {
+            if (arg.resource.extendedProps.estadoBloqueado) arg.el.title = 'Equipamento indisponível para reserva'
+          }}
           slotDuration="01:00:00"
           snapDuration="01:00:00"
           slotMinWidth={28}

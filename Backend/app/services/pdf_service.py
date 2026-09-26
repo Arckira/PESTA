@@ -16,15 +16,15 @@ logger = logging.getLogger(__name__)
 _LOGO_BASE64: str = ""
 try:
     _logo_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "Frontend", "src", "assets", "industrial-testing-lab-logo.png"
+        os.path.dirname(__file__), "..", "..", "..", "Frontend", "src", "assets", "lab-logo.png"
     )
     with open(_logo_path, "rb") as _f:
         _LOGO_BASE64 = base64.b64encode(_f.read()).decode("ascii")
 except FileNotFoundError:
-    logger.warning("Logo INDUSTRIAL TESTING LAB não encontrado — PDFs usarão texto.")
+    logger.warning("Logo não encontrado — PDFs usarão texto.")
 
 LOGO_HTML: str = (
-    f'<img src="data:image/png;base64,{_LOGO_BASE64}" alt="INDUSTRIAL TESTING LAB" class="logo-img"/>'
+    f'<img src="data:image/png;base64,{_LOGO_BASE64}" alt="Industrial Testing Lab" class="logo-img"/>'
     if _LOGO_BASE64
     else '<div class="logo-fallback">INDUSTRIAL TESTING LAB</div>'
 )

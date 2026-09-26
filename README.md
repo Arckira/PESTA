@@ -1,32 +1,93 @@
-# PESTA
+# Industrial Testing Lab — Asset & Operations Management Platform
 
-Sistema Integrado de Gestão de Laboratório para o Testing Centre da Industrial Testing Lab, focado na **Digitalização e Otimização Industrial**.
+Sistema integrado de gestão de laboratório industrial, focado na **digitalização e otimização de operações de ensaio**: inventário de equipamentos, reservas, manutenção, avarias, calibrações e indicadores de desempenho (OEE) em tempo real.
 
-## 🎯 Objetivo do MVP
+Projeto académico/pessoal, desenvolvido de raiz e avaliado com 19 valores.
 
-Implementar uma plataforma única, robusta e escalável para gerir o ciclo de vida completo dos ativos de laboratório:
+## Overview
 
-- **Gestão de Inventário**: registo técnico de equipamentos (microcontroladores, sensores, drivers, etc.).
-- **Controlo de Operações**: reservas e agendamento para evitar conflitos de utilização.
-- **Manutenção e Calibração**: monitorização de estados (*Operacional*, *Avaria*, *Manutenção*) e alertas de calibração.
-- **Análise de Dados**: dashboard com métricas críticas em tempo real (disponibilidade e histórico de falhas).
+A plataforma cobre o ciclo de vida operacional de um laboratório de ensaios industriais:
 
-## 🧱 Arquitetura Tecnológica
+- **Gestão de Ativos**: inventário técnico de equipamentos (câmaras climáticas, câmaras de choque térmico, fornos, salinas, etc.), com estado operacional em tempo real.
+- **Reservas e Agendamento**: calendário de utilização (FullCalendar) para evitar conflitos entre operadores.
+- **Avarias e Manutenção**: registo, acompanhamento e resolução de avarias; histórico de manutenções preventivas/corretivas com custos e fornecedores.
+- **Calibrações e Verificações**: controlo de validade de calibrações e alertas de vencimento.
+- **OEE Industrial**: cálculo de Disponibilidade, Performance e Qualidade por equipamento e por família de ativos.
+- **Rastreabilidade**: histórico de sessões de uso, eventos e emissão de relatórios em PDF.
+- **Check-in por QR Code**: identificação rápida de equipamentos via QR Code, com um fluxo mobile-first dedicado.
+- **Autenticação e Perfis**: controlo de acesso por utilizador/perfil (ex. administrador vs. operador).
 
-- **Backend**: Python com FastAPI, com foco em desempenho e modularidade.
-- **Frontend**: React com interface responsiva e CSS moderno (Tailwind/Bootstrap).
-- **Base de Dados**: MSSQL (SQL Server 2022 Express), alinhado com a infraestrutura Industrial Testing Lab.
+## Architecture
 
-## 🧪 Metodologia de Desenvolvimento
+```
+React / Vite
+      │
+      │ REST API (JSON)
+      ▼
+FastAPI
+      │
+      ▼
+SQLModel / SQLAlchemy
+      │
+      ▼
+SQLite (WAL) ── modo de desenvolvimento e implementação atual
+      │
+      └── camada de acesso a dados preparada para dialeto MSSQL
+          (deteção de dialeto e migração incremental de esquema
+           já implementadas; não usado em produção neste projeto)
+```
 
-- **Código Limpo**: PEP8 no Python e organização modular.
-- **Robustez**: validação de inputs e tratamento de exceções para reduzir falhas em contexto crítico.
-- **Documentação Técnica**: docstrings (Google/NumPy) para manutenção, avaliação técnica e sustentabilidade.
-- **Execução Passo-a-Passo**: identificação de variáveis, aplicação teórica e cálculos intermédios em cada resolução.
+- **Backend**: Python 3.12 + FastAPI, SQLModel/SQLAlchemy, Alembic para migrações, APScheduler para tarefas periódicas, Playwright para geração de PDFs.
+- **Frontend**: React + Vite, React Router, FullCalendar, Recharts, i18n (PT/EN).
+- **Base de dados**: SQLite em modo WAL (implementação e demonstração atuais). O código de acesso a dados já distingue o dialeto da ligação e aplica migrações condicionais de esquema para SQLite e MSSQL — a base está preparada para migrar para SQL Server, mas essa migração **não foi executada nem validada** neste projeto.
 
-## 🚀 Próximos Entregáveis
+## Installation
 
-1. Definição do modelo de dados (inventário, reservas, manutenção e eventos de falha).
-2. Implementação dos serviços de backend em FastAPI.
-3. Criação da interface React para operação diária do laboratório.
-4. Disponibilização de dashboard operacional com indicadores-chave.
+### Backend (FastAPI)
+
+```bash
+cd Backend
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+pip install -r requirements.txt
+copy .env.example .env        # ajustar conforme necessário
+python run.py                 # ou: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Frontend (React / Vite)
+
+```bash
+cd Frontend
+npm install
+copy .env.example .env        # ajustar conforme necessário
+npm run dev
+```
+
+### Testes
+
+```bash
+cd Backend
+pytest
+```
+
+```bash
+cd Frontend
+npm run test
+```
+
+## Engineering Practices
+
+- **Modularidade**: backend organizado por camadas (`models`, `schemas`, `routers`, `services`, `core`), sem lógica de negócio nos endpoints.
+- **Transaction safety**: operações críticas em SQL usam sessões transacionais com `rollback` explícito em caso de erro, preservando a integridade referencial.
+- **Poka-Yoke / prevenção de erro**: validação de esquemas com Pydantic, máquinas de estado para equipamentos/sessões e verificações que impedem transições inválidas (ex. reservas sobrepostas, equipamento em avaria a ser reservado).
+- **Resiliência**: tratamento explícito de exceções nos pontos de falha mais prováveis (BD, geração de PDF, agendamento).
+- **Logging estruturado**: uso do módulo `logging` do Python com níveis apropriados, em vez de `print()`.
+- **Testes automatizados**: suite `pytest` cobre regras de negócio críticas (OEE, validação de reservas, máquina de estados, segurança).
+- **Internacionalização**: interface disponível em Português e Inglês.
+
+Não são reivindicadas certificações formais (ISO/IATF); as práticas acima seguem princípios de engenharia habitualmente associados a esses referenciais, aplicados ao nível do código.
+
+## Notas
+
+- Este repositório foi anonimizado a partir do projeto original: nomes de empresa, logótipos e identificadores específicos foram substituídos por termos genéricos. A funcionalidade e as regras de negócio não foram alteradas.
+- Dados de demonstração podem ser gerados com `Backend/seed_demo_poster.py` (nunca correr sobre a base de dados de produção — ver instruções no próprio ficheiro).

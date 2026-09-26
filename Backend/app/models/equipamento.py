@@ -54,6 +54,10 @@ class Equipamento(UTCModel, table=True):
         default=EstadoEquipamento.DISPONIVEL.value,
         sa_column=Column(String(30), nullable=False, index=True),
     )
+    seccao: str = Field(
+        default="Environmental",
+        sa_column=Column("seccao", String(50), nullable=False, index=True),
+    )
     foto_url: Optional[str] = Field(default=None, sa_column=Column(String(500)))
     criado_em: datetime = Field(
         default_factory=utc_now,

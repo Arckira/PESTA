@@ -10,78 +10,7 @@ import styles from './Avarias.module.css'
 import { useEquipamentos } from '../hooks/useEquipamentos.js'
 import StatusBadge from '../components/StatusBadge.jsx'
 import ResourceTable from '../components/ResourceTable.jsx'
-import { fmtDateTime as fmt, fmtEur } from '../utils/dateFormat.js'
-
-function PainelDistribuicaoAvarias({ avarias, equipMap, locale }) {
-  const [expandido, setExpandido] = useState(() => {
-    try { return localStorage.getItem('industrial-testing-lab_dist_avarias_expandido') !== 'false' } catch { return true }
-  })
-
-  const distribuicao = useMemo(() => {
-    const mapa = {}
-    for (const av of avarias) {
-      const id = av.equipamento_id
-      if (!mapa[id]) mapa[id] = { equipamento_id: id, total: 0, abertas: 0, resolvidas: 0, custo_total: 0 }
-      mapa[id].total += 1
-      if (av.resolvida) mapa[id].resolvidas += 1
-      else mapa[id].abertas += 1
-      mapa[id].custo_total += av.custo_reparacao ?? 0
-    }
-    return Object.values(mapa).sort((a, b) => b.total - a.total).slice(0, 10)
-  }, [avarias])
-
-  const toggle = () => {
-    setExpandido(v => {
-      try { localStorage.setItem('industrial-testing-lab_dist_avarias_expandido', String(!v)) } catch {}
-      return !v
-    })
-  }
-
-  return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', marginBottom: 20 }}>
-      <div
-        onClick={toggle}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', background: 'var(--surface)', cursor: 'pointer', userSelect: 'none' }}
-      >
-        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Distribuição por Equipamento
-        </span>
-        <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{expandido ? '▾ recolher' : '▸ expandir'}</span>
-      </div>
-
-      {expandido && (
-        <div style={{ padding: '12px 16px', background: 'var(--bg)' }}>
-          {distribuicao.length === 0 ? (
-            <p style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 13, margin: 0 }}>Sem avarias registadas.</p>
-          ) : (
-            distribuicao.map(d => {
-              const eq = equipMap[d.equipamento_id]
-              const nome = eq?.nome ?? `EQ-${d.equipamento_id}`
-              const pctAbertas = d.total > 0 ? (d.abertas / d.total) * 100 : 0
-              const pctResolvidas = d.total > 0 ? (d.resolvidas / d.total) * 100 : 0
-              return (
-                <div key={d.equipamento_id} style={{ marginBottom: 10 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <Link to={`/equipamentos/${d.equipamento_id}`} style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none' }}>
-                      {nome}
-                    </Link>
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {d.total} avaria{d.total !== 1 ? 's' : ''} · {d.abertas} abertas · {fmtEur(d.custo_total, locale)}
-                    </span>
-                  </div>
-                  <div style={{ height: 6, borderRadius: 3, background: 'var(--border)', marginTop: 4, overflow: 'hidden', display: 'flex' }}>
-                    <div style={{ width: `${pctAbertas}%`, background: '#dc2626', transition: 'width 0.3s' }} />
-                    <div style={{ width: `${pctResolvidas}%`, background: '#10b981', transition: 'width 0.3s' }} />
-                  </div>
-                </div>
-              )
-            })
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
+import { fmtDateTime as fmt } from '../utils/dateFormat.js'
 
 export default function Avarias() {
   const toast = useToast()
@@ -127,6 +56,7 @@ export default function Avarias() {
       const haystack = [
         String(a.id),
         eq?.nome,
+        eq?.codigo,
         a.descricao,
         a.empresa_externa,
         a.num_sc_po,
@@ -194,6 +124,24 @@ export default function Avarias() {
     }
   }, [modal, relatorio, custo, ficheiroAnexo, carregar, toast, t])
 
+  const distribuicao = useMemo(() => {
+    const mapa = {}
+    avarias.forEach(a => {
+      if (!mapa[a.equipamento_id]) {
+        mapa[a.equipamento_id] = { abertas: 0, resolvidas: 0, custo: 0 }
+      }
+      if (a.resolvida) {
+        mapa[a.equipamento_id].resolvidas++
+        mapa[a.equipamento_id].custo += a.custo_reparacao || 0
+      } else {
+        mapa[a.equipamento_id].abertas++
+      }
+    })
+    return Object.entries(mapa)
+      .map(([id, s]) => ({ equipamento_id: Number(id), ...s, total: s.abertas + s.resolvidas }))
+      .sort((a, b) => b.abertas - a.abertas)
+  }, [avarias])
+
   const abertas   = avarias.filter(a => !a.resolvida).length
   const resolvidas = avarias.filter(a => a.resolvida).length
 
@@ -206,15 +154,18 @@ export default function Avarias() {
         <td className="mono" style={{ color: 'var(--text-dim)' }}>{String(av.id).padStart(3,'0')}</td>
         <td>
           {eq ? (
-            <Link to={`/equipamentos/${eq.id}`} className={styles.eqLink}>{eq.nome}</Link>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Link to={`/equipamentos/${eq.id}`} className={styles.eqLink}>{eq.nome}</Link>
+              {eq.codigo && <span className="mono" style={{ fontSize: 10, color: 'var(--text-dim)' }}>{eq.codigo}</span>}
+            </div>
           ) : `EQ-${av.equipamento_id}`}
         </td>
         <td className={styles.descricao}>{av.descricao === 'Avaria detetada via alteração de estado' ? t('avarias_page.mensagens.avariaAutomatica') : av.descricao}</td>
         <td style={{ color: av.empresa_externa ? 'inherit' : 'var(--text-dim)' }}>
           {av.empresa_externa || '—'}
         </td>
-        <td className="mono" style={{ color: av.custo_reparacao ? 'var(--text-primary)' : 'var(--text-dim)' }}>
-          {av.custo_reparacao ? `${av.custo_reparacao.toFixed(2)}€` : '—'}
+        <td className="mono" style={{ color: av.custo_reparacao != null ? 'var(--text-primary)' : 'var(--text-dim)' }}>
+          {av.custo_reparacao != null ? `${av.custo_reparacao.toFixed(2)}€` : '—'}
         </td>
         <td className="mono" style={{ fontSize: 11, color: av.num_sc_po ? 'inherit' : 'var(--text-dim)' }}>
           {av.num_sc_po || '—'}
@@ -268,7 +219,73 @@ export default function Avarias() {
         </div>
       </div>
 
-      <PainelDistribuicaoAvarias avarias={avarias} equipMap={equipamentos} locale={locale} />
+      {/* ── Distribuição visual por equipamento ── */}
+      {!loadingPage && distribuicao.length > 0 && (
+        <div className={styles.distribuicaoWrap}>
+
+          <div className={styles.distribuicaoHeader}>
+            <span className={styles.distribuicaoTitulo}>
+              {t('avarias_page.distribuicaoTitulo')}
+            </span>
+            <div className={styles.legenda}>
+              <span className={styles.legendaItem}>
+                <span className={`${styles.legendaDot} ${styles.legendaDotAberta}`} />
+                {t('avarias.open')}
+              </span>
+              <span className={styles.legendaItem}>
+                <span className={`${styles.legendaDot} ${styles.legendaDotResolvida}`} />
+                {t('avarias.resolved')}
+              </span>
+            </div>
+          </div>
+
+          {distribuicao.map(({ equipamento_id, abertas: nAb, resolvidas: nRes, total, custo }) => {
+            const eq = equipamentos[equipamento_id]
+            const pctAb  = total > 0 ? (nAb  / total) * 100 : 0
+            const pctRes = total > 0 ? (nRes / total) * 100 : 0
+            const tooltipBarra = `${nAb} ${t('avarias.open').toLowerCase()}, ${nRes} ${t('avarias.resolved').toLowerCase()}`
+
+            return (
+              <div key={equipamento_id} className={styles.equipRow}>
+
+                <div className={styles.equipInfo}>
+                  <span className={styles.equipNome}>
+                    {eq?.nome || `EQ-${equipamento_id}`}
+                  </span>
+                  {eq?.codigo && (
+                    <span className={styles.equipCodigo}>{eq.codigo}</span>
+                  )}
+                </div>
+
+                <div className={styles.equipMetricas}>
+                  <span className={styles.metricaContagem}>
+                    <strong>{nAb}</strong> {t('avarias.open').toLowerCase()} / {total} total
+                  </span>
+                  {custo > 0 && (
+                    <span className={styles.metricaCusto}>
+                      {custo.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                    </span>
+                  )}
+                </div>
+
+                <div
+                  className={styles.barra}
+                  title={tooltipBarra}
+                  aria-label={tooltipBarra}
+                >
+                  {pctAb > 0 && (
+                    <div className={styles.barraAberta} style={{ width: `${pctAb}%` }} />
+                  )}
+                  {pctRes > 0 && (
+                    <div className={styles.barraResolvida} style={{ width: `${pctRes}%` }} />
+                  )}
+                </div>
+
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {loadingPage && <div className={styles.empty}>{t('common.loading')}</div>}
 

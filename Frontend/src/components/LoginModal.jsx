@@ -94,10 +94,17 @@ export default function LoginModal() {
       setPin('')
       toast.success('Sessao iniciada com sucesso.')
       if (!data.utilizador.forcar_troca_pin) {
-        // Se veio de scan QR ou de página protegida, redirecionar para esse destino
-        const destino = redirectPath || location.state?.from || getPostLoginPath(data.utilizador)
-        if (redirectPath) setRedirectPath(null)
-        navigate(destino, { replace: true })
+        // Porquê: só navegar se houver destino explícito (redirectPath definido por
+        // openAuthPrompt, ou state.from de rota protegida). Um login disparado pelo
+        // retry de 401 a meio de uma página deve manter o utilizador onde está —
+        // o pedido pendente da API retoma sozinho após autenticação.
+        const destino = redirectPath || location.state?.from || null
+        if (destino) {
+          setRedirectPath(null)
+          navigate(destino, { replace: true })
+        }
+        // Sem destino explícito: nenhuma navegação. A rota /login é coberta pelo
+        // useEffect de Login.jsx (navigate(from || getPostLoginPath(user))).
       }
     } catch (e2) {
       setErro(e2.message)

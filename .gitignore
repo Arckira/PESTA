@@ -14,15 +14,35 @@ env/
 # Local database
 *.db
 *.sqlite3
+*.db-shm
+*.db-wal
+*.bak
+.coverage
 
 # Node / Vite
 Frontend/node_modules/
 Frontend/dist/
+node_modules/
+dist/
+build/
+
+# Packaged executables / archives
+*.exe
+*.zip
+
+# Uploads
+uploads/
 
 # Logs and OS files
 *.log
+logs/
 .DS_Store
 Thumbs.db
+
+# Environment variables
+.env
+.env.local
+!.env.example
 
 # Editor
 .vscode/

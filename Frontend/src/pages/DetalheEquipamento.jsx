@@ -459,7 +459,7 @@ export default function DetalheEquipamento() {
           <h1 className={`${styles.title} text-base font-bold text-gray-800 tracking-wide uppercase`}>{eq.nome}</h1>
 
           <div className={styles.subInfo}>
-            <span>{eq.tipo}</span>
+            <span>{tCategoria(eq.tipo)}</span>
             <span>·</span>
             <span>{eq.localizacao}</span>
           </div>
@@ -604,10 +604,10 @@ export default function DetalheEquipamento() {
                 fontFamily: 'var(--font-display)',
                 color: oeePctDinamico >= 85 ? '#10b981' : oeePctDinamico >= 50 ? '#f59e0b' : '#c8102e',
               }}>
-                {`${oeePctDinamico.toFixed(1)}%`}
+                {oeePctDinamico != null ? `${oeePctDinamico.toFixed(1)}%` : '—'}
               </span>
               <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-                {t('detalhe.oeeCardHorasSufixo', { reais: tempoRealDinamico.toFixed(1), planeadas: oeeData.tempo_planeado_h.toFixed(1) })}
+                {t('detalhe.oeeCardHorasSufixo', { reais: (tempoRealDinamico ?? 0).toFixed(1), planeadas: (oeeData.tempo_planeado_h ?? 0).toFixed(1) })}
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1034,7 +1034,7 @@ function SecaoHistoricoFinanceiro({ equipamentoId, t, locale }) {
 
   return (
     <div className={styles.section}>
-      <div className="label">Histórico Financeiro ({anoAtual})</div>
+      <div className="label">{t('financeiro.historico')} ({anoAtual})</div>
 
       {total === 0 ? (
         <div style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 6 }}>

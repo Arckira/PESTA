@@ -103,6 +103,7 @@ _sessaouso_migrada = False
 _avarias_migrada = False
 _manutencoes_migrada = False
 _fornecedores_migrada = False
+_equipamentos_seccao_migrada = False
 
 
 def garantir_colunas_sessaouso() -> None:
@@ -182,6 +183,25 @@ def garantir_colunas_manutencoes() -> None:
         logger.info("Colunas Manutencoes garantidas.")
     except Exception:
         logger.warning("Não foi possível garantir colunas Manutencoes — re-tentada na próxima chamada.")
+
+
+def garantir_coluna_equipamentos_seccao() -> None:
+    global _equipamentos_seccao_migrada
+    if _equipamentos_seccao_migrada:
+        return
+    try:
+        tipo_texto_50 = "NVARCHAR(50)" if IS_MSSQL else "VARCHAR(50)"
+        with engine.begin() as conn:
+            _garantir_coluna_mssql(
+                conn,
+                "Equipamentos",
+                "seccao",
+                f"{tipo_texto_50} NOT NULL DEFAULT 'Environmental'",
+            )
+        _equipamentos_seccao_migrada = True
+        logger.info("Coluna Equipamentos.seccao garantida.")
+    except Exception:
+        logger.warning("Não foi possível garantir coluna Equipamentos.seccao — re-tentada na próxima chamada.")
 
 
 def garantir_tabela_fornecedores() -> None:

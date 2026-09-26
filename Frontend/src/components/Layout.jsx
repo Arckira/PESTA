@@ -1,12 +1,11 @@
 import { Link, NavLink } from 'react-router-dom'
-import { LogOut, LayoutDashboard, Microscope, CalendarCheck, AlertTriangle, Wrench, ClipboardCheck, Scale, Users } from 'lucide-react'
+import { LogOut, LayoutDashboard, Microscope, CalendarCheck, AlertTriangle, Wrench, ClipboardCheck, Scale, Users, FlaskConical } from 'lucide-react'
 import styles from './Layout.module.css'
 import UserMenu from './UserMenu.jsx'
 import LanguageToggle from './LanguageToggle.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useLanguage } from '../contexts/useLanguage.js'
 import { PUBLIC_PATHS } from '../contexts/authNavigation.js'
-import labLogo from '../assets/industrial-testing-lab-logo.png'
 
 export default function Layout({ children }) {
   const { user, logout, openAuthPrompt } = useAuth()
@@ -34,7 +33,7 @@ export default function Layout({ children }) {
             className={styles.logoLink}
             aria-label={t('nav.goHome')}
           >
-            <img src={labLogo} alt="Industrial Testing Lab" className={styles.logoImage} />
+            <FlaskConical className={styles.logoImage} aria-hidden="true" />
             <span className={styles.departmentName}>Testing Centre</span>
           </Link>
         </div>

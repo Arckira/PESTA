@@ -77,7 +77,7 @@ export const api = {
   authLogs:               () => request('/auth/logs'),
 
   // ── Equipamentos ──
-  listarEquipamentos:     ()            => request('/equipamentos'),
+  listarEquipamentos:     (seccao)      => request(`/equipamentos${seccao ? `?seccao=${encodeURIComponent(seccao)}` : ''}`),
   exportarEquipamentosPdf: async ({ filtro = '', estado = '' } = {}) => {
     const token = getStoredToken()
     const headers = token ? { Authorization: `Bearer ${token}` } : {}

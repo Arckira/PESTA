@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { User, Cpu, Folder, FlaskConical, Clock } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext.jsx'
+import { useLanguage } from '../../contexts/useLanguage.js'
 import styles from './CheckInModal.module.css'
 
 function minutosParaValorUnidade(minutos) {
@@ -20,6 +21,7 @@ export default function CheckInModal({
   saving,
 }) {
   const { user } = useAuth()
+  const { t } = useLanguage()
   const [projeto, setProjeto] = useState('')
   const [metodo, setMetodo] = useState('')
 
@@ -55,7 +57,7 @@ export default function CheckInModal({
     const totalH = duracaoMinutos / 60
     const dias = Math.floor(totalH / 24)
     const hRest = totalH % 24
-    if (dias > 0 && hRest === 0) return `${dias} dia${dias > 1 ? 's' : ''}`
+    if (dias > 0 && hRest === 0) return `${dias} ${dias > 1 ? t('checkin.hintDias') : t('checkin.hintDia')}`
     if (dias > 0) return `${dias}d ${hRest}h`
     const h = Math.floor(totalH)
     const m = duracaoMinutos % 60
@@ -67,16 +69,14 @@ export default function CheckInModal({
   return (
     <div className={styles.overlay} onClick={handleClose}>
       <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <div className="label" style={{ marginBottom: 6 }}>Equipamentos</div>
+        <div className="label" style={{ marginBottom: 6 }}>{t('checkin.eyebrow')}</div>
         <h2 className={styles.modalTitle}>
-          {modoEdicao ? 'Ajustar Duração do Ensaio' : 'Iniciar Ensaio'}
+          {modoEdicao ? t('checkin.tituloEditar') : t('checkin.tituloNovo')}
         </h2>
 
         <div className={styles.infoAlert}>
           <span className={styles.infoAlertIcon}>i</span>
-          <span>
-            O check-in associa o seu perfil ao equipamento em tempo real para monitorização de OEE.
-          </span>
+          <span>{t('checkin.infoOEE')}</span>
         </div>
 
         <div className={styles.fields}>
@@ -84,7 +84,7 @@ export default function CheckInModal({
           <div className={styles.field}>
             <span className={styles.fieldLabel}>
               <User size={14} className={styles.fieldIcon} />
-              Utilizador
+              {t('checkin.utilizador')}
             </span>
             <div className={styles.readonlyField}>
               <span className={styles.readonlyValue}>{user?.nome || '—'}</span>
@@ -98,7 +98,7 @@ export default function CheckInModal({
           <div className={styles.field}>
             <span className={styles.fieldLabel}>
               <Cpu size={14} className={styles.fieldIcon} />
-              Equipamento
+              {t('checkin.equipamento')}
             </span>
             <div className={styles.readonlyField}>
               {equipamentoCodigo && (
@@ -113,11 +113,11 @@ export default function CheckInModal({
             <label className={styles.field}>
               <span className={styles.fieldLabel}>
                 <Folder size={14} className={styles.fieldIcon} />
-                Projeto *
+                {t('checkin.projeto')} *
               </span>
               <input
                 className={styles.input}
-                placeholder="ex: Projeto X — Lote 42"
+                placeholder={t('checkin.projetoPlaceholder')}
                 value={projeto}
                 onChange={(e) => setProjeto(e.target.value)}
                 autoFocus
@@ -130,11 +130,11 @@ export default function CheckInModal({
             <label className={styles.field}>
               <span className={styles.fieldLabel}>
                 <FlaskConical size={14} className={styles.fieldIcon} />
-                Método de Ensaio *
+                {t('checkin.metodo')} *
               </span>
               <input
                 className={styles.input}
-                placeholder="ex: Norma ISO 16750"
+                placeholder={t('checkin.metodoPlaceholder')}
                 value={metodo}
                 onChange={(e) => setMetodo(e.target.value)}
               />
@@ -145,13 +145,13 @@ export default function CheckInModal({
           <div className={styles.field}>
             <span className={styles.fieldLabel}>
               <Clock size={14} className={styles.fieldIcon} />
-              Duração Estimada *
+              {t('checkin.duracao')} *
             </span>
             <div className={styles.duracaoWrap}>
               <input
                 type="number"
                 className={styles.input}
-                placeholder="Valor"
+                placeholder={t('checkin.duracaoValorPlaceholder')}
                 min="1"
                 step="1"
                 value={duracaoValor}
@@ -162,8 +162,8 @@ export default function CheckInModal({
                 value={duracaoUnidade}
                 onChange={(e) => setDuracaoUnidade(e.target.value)}
               >
-                <option value="horas">Horas</option>
-                <option value="dias">Dias</option>
+                <option value="horas">{t('checkin.unidadeHoras')}</option>
+                <option value="dias">{t('checkin.unidadeDias')}</option>
               </select>
             </div>
             {duracaoHint && (
@@ -178,7 +178,7 @@ export default function CheckInModal({
             onClick={handleClose}
             disabled={saving}
           >
-            Cancelar
+            {t('common.cancel')}
           </button>
           <button
             className={modoEdicao ? styles.btnAmber : styles.btnGreen}
@@ -186,8 +186,8 @@ export default function CheckInModal({
             disabled={!podeConfirmar}
           >
             {saving
-              ? modoEdicao ? 'A guardar...' : 'A iniciar...'
-              : modoEdicao ? 'Guardar Alterações' : 'Confirmar Check-in'}
+              ? modoEdicao ? t('checkin.aGuardar') : t('checkin.aIniciar')
+              : modoEdicao ? t('checkin.guardarAlteracoes') : t('checkin.confirmar')}
           </button>
         </div>
       </div>

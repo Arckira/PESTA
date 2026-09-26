@@ -2,7 +2,7 @@
 seed_demo_poster.py — Popula a BD com dados demo plausíveis para screenshots do poster.
 
 Objetivo: OEE Global ≈ valor alvo (default 72%), MTBF/MTTR preenchidos e cartões
-de estado com distribuição realista, sem expor métricas internas reais da Industrial Testing Lab.
+de estado com distribuição realista, sem expor métricas internas reais de produção.
 
 ⚠️  EXECUTAR SEMPRE SOBRE UMA CÓPIA DA BASE DE DADOS:
     copy lab_assets.db lab_assets_demo.db

@@ -1,1 +1,0 @@
-Neste momento preciso que 

@@ -94,8 +94,8 @@ input, select, textarea { font-family: inherit; }
 .badge-ok::before { background: var(--green); animation: pulse 2s infinite; }
 .badge-nok   { background: var(--red-glow); border-color: var(--red); color: var(--red); }
 .badge-nok::before { background: var(--red); }
-.badge-ocupado { background: var(--amber-glow); border-color: var(--amber); color: var(--amber); }
-.badge-ocupado::before { background: var(--amber); }
+.badge-ocupado { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.35); color: #b45309; }
+.badge-ocupado::before { background: #f59e0b; }
 .badge-calib { background: var(--blue-glow); border-color: var(--blue); color: var(--blue); }
 .badge-calib::before { background: var(--blue); }
 .badge-manut { background: rgba(168,85,247,0.12); border-color: var(--purple); color: var(--purple); }

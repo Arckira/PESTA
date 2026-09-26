@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import EmptyState from './EmptyState.jsx'
 import { fmtDate as fmtData, fmtEur } from '../utils/dateFormat.js'
+import { useLanguage } from '../contexts/useLanguage.js'
 
 const TRUNC = 120
 
@@ -121,12 +122,14 @@ function AvariaItem({ av, locale }) {
 }
 
 export default function TimelineAvarias({ avarias = [], locale = 'pt-PT' }) {
+  const { t } = useLanguage()
+
   if (!avarias.length) {
     return (
       <EmptyState
         icon="✓"
-        title="Sem avarias"
-        subtitle="Sem avarias registadas."
+        title={t('detalhe.semAvarias')}
+        subtitle={t('detalhe.semAvariasRegistadas')}
         variant="positive"
       />
     )

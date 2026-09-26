@@ -34,6 +34,7 @@ class EquipamentoCreate(BaseModel):
     peso_kg: Optional[float] = None
     peso_max_kg: Optional[float] = None
     notas_tecnicas: Optional[str] = None
+    seccao: str = "Environmental"
     estado_atual: str = EstadoEquipamento.DISPONIVEL.value
     foto_url: Optional[str] = None
 
@@ -61,5 +62,6 @@ class EquipamentoUpdate(BaseModel):
     temp_min: Optional[float] = None
     temp_max: Optional[float] = None
     humidade_max: Optional[float] = None
+    seccao: Optional[str] = None
     estado_atual: Optional[str] = None
     descricao_avaria: Optional[str] = None

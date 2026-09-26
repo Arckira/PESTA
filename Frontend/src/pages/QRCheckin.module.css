@@ -1,0 +1,273 @@
+/* ── Layout base ──────────────────────────────────────────────────────────── */
+.page {
+  min-height: 100dvh;
+  background: var(--bg-base);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+/* ── Cabeçalho ────────────────────────────────────────────────────────────── */
+.header {
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.logo {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--amber);
+}
+
+.btnLang {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Corpo principal ──────────────────────────────────────────────────────── */
+.body {
+  flex: 1;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── Loading ──────────────────────────────────────────────────────────────── */
+.centrado {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px 0;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: girar 0.7s linear infinite;
+}
+
+@keyframes girar {
+  to { transform: rotate(360deg); }
+}
+
+.spinnerTexto {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+/* ── Card do equipamento ──────────────────────────────────────────────────── */
+.equipCard {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+}
+
+.equipCodigo {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--amber);
+  letter-spacing: 0.08em;
+  margin-top: 10px;
+}
+
+.equipNome {
+  font-size: 20px;
+  font-weight: 700;
+  font-family: var(--font-display);
+  margin: 4px 0 6px;
+  color: var(--text-primary);
+}
+
+.equipLocal {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* ── Formulário ───────────────────────────────────────────────────────────── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.obrigatorio {
+  color: var(--red);
+}
+
+/* font-size: 16px é obrigatório — evita zoom automático no iOS Safari */
+.input {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 16px;
+  color: var(--text-primary);
+  width: 100%;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  font-family: var(--font-body);
+}
+
+.input:focus {
+  border-color: var(--amber);
+  outline: none;
+}
+
+.duracaoRow {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 8px;
+}
+
+.readonlyRow {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.erroInline {
+  font-size: 13px;
+  color: var(--red);
+}
+
+/* ── Cards de estado ──────────────────────────────────────────────────────── */
+.successCard {
+  background: var(--green-glow);
+  border: 1px solid var(--green);
+  border-radius: var(--radius-lg);
+  padding: 24px 20px;
+  text-align: center;
+}
+
+.successIcone {
+  font-size: 32px;
+  color: var(--green);
+}
+
+.successTitulo {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-top: 8px;
+}
+
+.successSub {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.blockedCard {
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  border: 1px solid var(--red);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+}
+
+.blockedTitulo {
+  font-weight: 700;
+  color: var(--red);
+  font-size: 15px;
+}
+
+.blockedTexto {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────────── */
+.footer {
+  padding: 16px 20px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* height: 56px garante touch target ≥ 48px (WCAG 2.5.5) */
+.btnPrimary {
+  background: var(--green);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0 24px;
+  height: 56px;
+  width: 100%;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: opacity var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btnPrimary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btnSecondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 24px;
+  height: 48px;
+  width: 100%;
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-family: var(--font-body);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Desktop (≥ 640px): centrar e dar sombra ao cartão ───────────────────── */
+@media (min-width: 640px) {
+  .page {
+    margin: 40px auto;
+    min-height: unset;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+  }
+}

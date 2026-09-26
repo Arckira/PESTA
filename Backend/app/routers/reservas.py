@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from app.core.deps import exigir_pin_alterado
 from app.db.database import get_session
-from app.models.base import RoleUtilizador
+from app.models.base import EstadoEquipamento, RoleUtilizador
 from app.models.equipamento import Equipamento
 from app.models.reserva import Reserva
 from app.models.sessao import SessaoUso
@@ -89,8 +89,18 @@ def criar_reserva(
 ) -> Reserva:
     if dados.utilizador_id != utilizador_atual.id and utilizador_atual.role != RoleUtilizador.ADMIN:
         raise HTTPException(status_code=403, detail="Só pode criar reservas para o próprio utilizador")
-    obter_ou_404(session, Equipamento, dados.equipamento_id, "Equipamento não encontrado")
+    equipamento = obter_ou_404(session, Equipamento, dados.equipamento_id, "Equipamento não encontrado")
     obter_ou_404(session, Utilizador, dados.utilizador_id, "Utilizador não encontrado")
+
+    if equipamento.estado_atual in {
+        EstadoEquipamento.AVARIADO,
+        EstadoEquipamento.MANUTENCAO,
+        EstadoEquipamento.CALIBRACAO,
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Equipamento em estado '{equipamento.estado_atual}' não pode ser reservado",
+        )
 
     validar_intervalo_reserva(dados.data_inicio, dados.data_fim)
     validar_colisao_reserva(session, dados.equipamento_id, dados.data_inicio, dados.data_fim)

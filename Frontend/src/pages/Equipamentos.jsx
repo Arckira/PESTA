@@ -19,11 +19,11 @@ const ESTADOS_UI = [
 ]
 
 const TIPOS = [
-  'Câmara Climática',
-  'Forno',
-  'Câmara Choque Térmico',
-  'Salina',
-  'Outro',
+  { value: 'Câmara Climática',      labelKey: 'equipamentos.tipoCamaraClimatica' },
+  { value: 'Forno',                 labelKey: 'equipamentos.tipoForno' },
+  { value: 'Câmara Choque Térmico', labelKey: 'equipamentos.tipoChoqueTermico' },
+  { value: 'Salina',                labelKey: 'equipamentos.tipoSalina' },
+  { value: 'Outro',                 labelKey: 'equipamentos.tipoOutro' },
 ]
 
 const CATEGORIAS = [
@@ -44,6 +44,7 @@ const EMPTY_CREATE_FORM = {
   codigo_interno: '',
   tipo: '',
   localizacao: '',
+  seccao: 'Environmental',
   // Apenas o range de temperatura é pedido no registo inicial
   temp_min: '',
   temp_max: '',
@@ -201,6 +202,7 @@ export default function Equipamentos() {
   const [equipamentos, setEquipamentos] = useState([])
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState(null)
+  const [seccaoAtiva, setSeccaoAtiva] = useState('Environmental')
   const [filtro, setFiltro] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('Todos')
 
@@ -223,10 +225,10 @@ export default function Equipamentos() {
   const [editSubmittedOnce, setEditSubmittedOnce] = useState(false)
   const [deletingId, setDeletingId] = useState(null)
 
-  const carregar = async () => {
+  const carregar = async (seccao = seccaoAtiva) => {
     setLoading(true)
     try {
-      const data = await api.listarEquipamentos()
+      const data = await api.listarEquipamentos(seccao)
       setEquipamentos(data)
       setErro(null)
     } catch (e) {
@@ -238,8 +240,11 @@ export default function Equipamentos() {
   }
 
   useEffect(() => {
-    carregar()
-  }, [])
+    setFiltro('')
+    setFiltroEstado('Todos')
+    setFiltroCategoria('Todos')
+    carregar(seccaoAtiva)
+  }, [seccaoAtiva])
 
   const filtrados = equipamentos.filter((eq) => {
     const texto = `${eq.nome || ''} ${eq.tipo || ''} ${eq.localizacao || ''}`.toLowerCase()
@@ -325,7 +330,7 @@ export default function Equipamentos() {
   const createRequiredTotal = 4
 
   const openCreate = () => {
-    setCreateForm(EMPTY_CREATE_FORM)
+    setCreateForm({ ...EMPTY_CREATE_FORM, seccao: seccaoAtiva })
     setCreateErro('')
     setCreateTouched({})
     setCreateSubmittedOnce(false)
@@ -427,6 +432,7 @@ export default function Equipamentos() {
         codigo: createForm.codigo_interno.trim(),
         tipo: createForm.tipo,
         localizacao: createForm.localizacao.trim(),
+        seccao: createForm.seccao || seccaoAtiva,
         ...buildNumericPayload(createForm, CREATE_NUMERIC_FIELDS),
         estado_atual: normalizarEstadoEquipamento(createForm.estado_atual),
       }
@@ -631,6 +637,24 @@ export default function Equipamentos() {
         actionText={t('equipamentos.novoEquipamento')}
         onActionClick={openCreate}
       />
+
+      <div className={styles.sectionTabs}>
+        {[
+          { value: 'Environmental', labelKey: 'equipamentos.seccaoAmbiental', icon: '🌡' },
+          { value: 'Chemical',      labelKey: 'equipamentos.seccaoQuimica',   icon: '⬡' },
+          { value: 'Dimensional',   labelKey: 'equipamentos.seccaoDimensional', icon: '⊞' },
+        ].map((sec) => (
+          <button
+            key={sec.value}
+            type="button"
+            className={`${styles.sectionTab} ${seccaoAtiva === sec.value ? styles.sectionTabActive : ''}`}
+            onClick={() => setSeccaoAtiva(sec.value)}
+          >
+            <span className={styles.sectionTabIcon}>{sec.icon}</span>
+            {t(sec.labelKey)}
+          </button>
+        ))}
+      </div>
 
       <div className={styles.categoryTabs}>
         {CATEGORIAS.filter((cat) => cat.tipos === null || contagensPorCategoria[cat.id] > 0).map((cat) => (
@@ -844,7 +868,7 @@ export default function Equipamentos() {
                     onBlur={() => markCreateTouched('tipo')}
                   >
                     <option value="">{t('equipamentos.selecionarTipo')}</option>
-                    {TIPOS.map((tipo) => <option key={tipo} value={tipo}>{tipo}</option>)}
+                    {TIPOS.map((tipo) => <option key={tipo.value} value={tipo.value}>{t(tipo.labelKey)}</option>)}
                   </select>
                   {showCreateError('tipo') && <span className={styles.fieldHintError}>{createFieldErrors.tipo}</span>}
                 </label>
@@ -859,6 +883,20 @@ export default function Equipamentos() {
                     placeholder="ex: Laboratório 2 - Piso 1"
                   />
                   {showCreateError('localizacao') && <span className={styles.fieldHintError}>{createFieldErrors.localizacao}</span>}
+                </label>
+
+                <label className={styles.field}>
+                  <span className="label">{t('equipamentos.campSeccao')}</span>
+                  <select
+                    className={styles.input}
+                    value={createForm.seccao}
+                    onChange={(e) => updateCreateField('seccao', e.target.value)}
+                    required
+                  >
+                    <option value="Environmental">{t('equipamentos.seccaoAmbiental')}</option>
+                    <option value="Chemical">{t('equipamentos.seccaoQuimica')}</option>
+                    <option value="Dimensional">{t('equipamentos.seccaoDimensional')}</option>
+                  </select>
                 </label>
               </div>
 
@@ -875,34 +913,34 @@ export default function Equipamentos() {
                 <div className={styles.horizontalRow}>
                   <div className={styles.horizontalItem}>
                     <NumberField
-                      label="❄️ Temp. mínima"
+                      label={`❄️ ${t('equipamentos.tempMinLabel')}`}
                       unit="°C"
                       value={createForm.temp_min}
                       onChange={(value) => updateCreateField('temp_min', value)}
                       compact
-                      placeholder="ex: -20"
+                      placeholder={t('equipamentos.tempMinPlaceholder')}
                     />
                   </div>
 
                   <div className={styles.horizontalItem}>
                     <NumberField
-                      label="🔥 Temp. máxima"
+                      label={`🔥 ${t('equipamentos.tempMaxLabel')}`}
                       unit="°C"
                       value={createForm.temp_max}
                       onChange={(value) => updateCreateField('temp_max', value)}
                       compact
-                      placeholder="ex: 80"
+                      placeholder={t('equipamentos.tempMaxPlaceholder')}
                     />
                   </div>
 
                   <div className={styles.horizontalItem}>
                       <NumberField
-                        label="💧 Humidade"
+                        label={`💧 ${t('equipamentos.humidadeLabel')}`}
                         unit="%"
                         value={createForm.humidade_max}
                         onChange={(value) => updateCreateField('humidade_max', value)}
                         compact
-                        placeholder="opcional"
+                        placeholder={t('equipamentos.humidadePlaceholder')}
                       />
                   </div>
                 </div>
@@ -1103,7 +1141,7 @@ export default function Equipamentos() {
                     onBlur={() => markEditTouched('tipo')}
                   >
                     <option value="">{t('equipamentos.selecionarTipo')}</option>
-                    {TIPOS.map((tipo) => <option key={tipo} value={tipo}>{tipo}</option>)}
+                    {TIPOS.map((tipo) => <option key={tipo.value} value={tipo.value}>{t(tipo.labelKey)}</option>)}
                   </select>
                   {showEditError('tipo') && <span className={styles.fieldHintError}>{editFieldErrors.tipo}</span>}
                 </label>

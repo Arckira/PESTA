@@ -27,8 +27,14 @@ router = APIRouter(tags=["equipamentos"])
 
 
 @router.get("/equipamentos", summary="Listar todos os equipamentos")
-def listar_equipamentos(session: Session = Depends(get_session)):
-    return session.exec(select(Equipamento)).all()
+def listar_equipamentos(
+    seccao: Optional[str] = None,
+    session: Session = Depends(get_session),
+):
+    query = select(Equipamento)
+    if seccao:
+        query = query.where(Equipamento.seccao == seccao)
+    return session.exec(query).all()
 
 
 @router.get("/equipamentos/exportar/pdf", summary="Exportar inventário de equipamentos para PDF")

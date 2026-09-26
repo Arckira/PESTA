@@ -1,5 +1,5 @@
 /**
- * Configurações de Rede para a Intranet do Laboratorio
+ * Configurações de Rede para a Intranet do Laboratório
  * O Hostname permite que os telemóveis encontrem o teu PC sem fixar o IP.
  *
  * Porquê window.location.hostname:

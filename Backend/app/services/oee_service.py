@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Optional
 
 from app.models.reserva import Reserva
 from app.models.sessao import SessaoUso
@@ -12,15 +12,16 @@ from app.models.sessao import SessaoUso
 logger = logging.getLogger(__name__)
 
 
-def calcular_oee_temporal(tempo_real_s: float, tempo_planeado_s: float) -> Optional[float]:
-    """OEE = min(Tempo_Real / Tempo_Planeado, 1) × 100.
+def calcular_oee_temporal(tempo_real_s: float, tempo_disponivel_s: float) -> Optional[float]:
+    """OEE = min(Tempo_Real / Tempo_Disponivel, 1) × 100.
 
+    Tempo_Disponivel = janela_total − downtime_avarias.
     Limita a 100% para que overruns não distorçam a métrica de eficiência.
-    Devolve None se não houver tempo planeado (sem reservas no período).
+    Devolve None se tempo_disponivel_s == 0 (janela totalmente coberta por avarias).
     """
-    if tempo_planeado_s <= 0:
+    if tempo_disponivel_s <= 0:
         return None
-    return round(min(tempo_real_s / tempo_planeado_s, 1.0) * 100, 1)
+    return round(min(tempo_real_s / tempo_disponivel_s, 1.0) * 100, 1)
 
 
 def calcular_metricas_uso(
@@ -104,39 +105,35 @@ def calcular_mtbf_mttr(session, dias: int = 30) -> dict:
     }
 
 
-def calcular_oee_equipamento(
-    reservas: list[Reserva],
-    sessoes: list[SessaoUso],
+def calcular_tempo_disponivel_s(
+    equipamento_id: Optional[int],
+    avarias: list,
+    janela_inicio: datetime,
+    janela_fim: datetime,
     agora: datetime,
-) -> dict[str, Any]:
-    """OEE com janelamento temporal dinâmico para um equipamento individual."""
-    tempo_planeado_s = 0.0
-    for r in reservas:
-        if agora <= r.data_inicio:
+) -> float:
+    """Tempo disponível = janela total − downtime por avarias com intersecção.
+
+    Porquê intersecção: uma avaria que começou antes de janela_inicio
+    só conta a partir de janela_inicio, não desde o início da avaria.
+    Avarias sem data_resolucao (ainda abertas) usam agora como fim efectivo,
+    clippado ao máximo em janela_fim.
+    equipamento_id=None agrega downtime de todos os equipamentos (histórico global).
+    """
+    janela_total_s = (janela_fim - janela_inicio).total_seconds()
+    downtime_s = 0.0
+    for a in avarias:
+        if equipamento_id is not None and a.equipamento_id != equipamento_id:
             continue
-        planeado = (min(agora, r.data_fim) - r.data_inicio).total_seconds()
-        tempo_planeado_s += max(0.0, planeado)
-
-    tempo_real_s = 0.0
-    for s in sessoes:
-        try:
-            fim_efetivo = s.fim if s.fim is not None else agora
-            tempo_real_s += max(0.0, (fim_efetivo - s.inicio).total_seconds())
-        except (TypeError, ValueError):
-            continue
-
-    oee_pct = calcular_oee_temporal(tempo_real_s, tempo_planeado_s)
-
-    if oee_pct is not None:
-        ratio = tempo_real_s / tempo_planeado_s
-        desvio_pct: Optional[float] = round(max(0.0, ratio - 1.0) * 100, 1)
-    else:
-        desvio_pct = None
-
-    return {
-        "oee_pct": oee_pct,
-        "desvio_planeamento_pct": desvio_pct,
-        "tempo_planeado_h": round(tempo_planeado_s / 3600, 2),
-        "tempo_real_h": round(tempo_real_s / 3600, 2),
-        "tem_sessao_ativa": any(s.fim is None for s in sessoes),
-    }
+        # Normaliza datetimes naive para UTC, por segurança
+        dr = a.data_registo
+        if dr.tzinfo is None:
+            dr = dr.replace(tzinfo=timezone.utc)
+        fim_avaria = a.data_resolucao if a.data_resolucao is not None else agora
+        if fim_avaria.tzinfo is None:
+            fim_avaria = fim_avaria.replace(tzinfo=timezone.utc)
+        ev_inicio = max(dr, janela_inicio)
+        ev_fim = min(fim_avaria, janela_fim)
+        if ev_fim > ev_inicio:
+            downtime_s += (ev_fim - ev_inicio).total_seconds()
+    return max(janela_total_s - downtime_s, 0.0)

@@ -50,6 +50,27 @@
   overflow: visible;
 }
 
+.resourceBloqueado {}
+.calendarWrap :global(.fc-resource-timeline .fc-timeline-lane).resourceBloqueado {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(120, 120, 128, 0.12),
+    rgba(120, 120, 128, 0.12) 6px,
+    rgba(120, 120, 128, 0.22) 6px,
+    rgba(120, 120, 128, 0.22) 12px
+  ) !important;
+  cursor: not-allowed;
+}
+
+.calendarWrap :global(.fc-datagrid-cell).resourceBloqueado {
+  background: rgba(120, 120, 128, 0.14) !important;
+}
+
+.calendarWrap :global(.fc-datagrid-cell).resourceBloqueado :global(.fc-datagrid-cell-cushion) {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
 .lockedField {
   background: var(--bg-card);
   border: 1px solid var(--border);

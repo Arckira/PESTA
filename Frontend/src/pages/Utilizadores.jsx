@@ -130,7 +130,7 @@ export default function Utilizadores() {
   if (user?.role !== 'admin') {
     return (
       <div className="fade-up">
-        <PageHeader categoria="Administração" titulo="Utilizadores" />
+        <PageHeader categoria={t('utilizadores_page.categoria')} titulo={t('utilizadores_page.titulo')} />
 
         <div className={styles.empty}>
           {t('utilizadores_page.acessoNegado')}
@@ -153,9 +153,9 @@ export default function Utilizadores() {
   return (
     <div className="fade-up">
       <PageHeader
-        categoria="Administração"
-        titulo="Utilizadores"
-        actionText="Novo Utilizador"
+        categoria={t('utilizadores_page.categoria')}
+        titulo={t('utilizadores_page.titulo')}
+        actionText={t('utilizadores_page.novoUtilizador')}
         onActionClick={() => setIsModalUtilizadorAberto(true)}
       />
 

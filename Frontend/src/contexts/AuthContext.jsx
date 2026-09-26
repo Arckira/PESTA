@@ -7,6 +7,12 @@ const AuthContext = createContext(null)
 const SESSION_STORAGE_KEY = 'lab_auth_session'
 const LAST_USER_STORAGE_KEY = 'lab_last_user_id'
 
+// Minutos de inatividade antes do logout automático.
+// Configurável via VITE_INATIVIDADE_MINUTOS no .env (padrão: 15 minutos).
+// Porque: 15 min é o equilíbrio entre segurança industrial e usabilidade
+// em turnos longos — suficiente para deslocações curtas ao equipamento.
+const INATIVIDADE_MS = (Number(import.meta.env.VITE_INATIVIDADE_MINUTOS) || 15) * 60 * 1000
+
 function readSession() {
   try {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY)
@@ -29,6 +35,12 @@ export function AuthProvider({ children }) {
   const [promptMode, setPromptMode] = useState('login')
   const [redirectPath, setRedirectPath] = useState(null)
   const pendingPromptRef = useRef(null)
+  // Timer de inatividade — guardado em ref para poder ser cancelado
+  // e reiniciado em cada interação sem causar re-renders.
+  const timerInatividadeRef = useRef(null)
+  // Ref ao logout — evita capturar uma closure desatualizada no useEffect
+  // do timer, sem precisar de o adicionar às dependências do effect.
+  const logoutRef = useRef(null)
 
   const syncBootstrapStatus = async ({ abrirSetup = false } = {}) => {
     try {
@@ -197,6 +209,40 @@ export function AuthProvider({ children }) {
     openBootstrapPrompt,
     closeAuthPrompt,
   }), [isLoading, session, promptOpen, promptMode, redirectPath, openAuthPrompt, openBootstrapPrompt, closeAuthPrompt])
+
+  // Mantém logoutRef sempre atualizado sem tornar os effects dependentes
+  // de logout (que é redefinido a cada render e causaria loops).
+  logoutRef.current = logout
+
+  useEffect(() => {
+    // Sem sessão ativa não há nada a proteger — limpa qualquer timer residual.
+    if (!session) {
+      if (timerInatividadeRef.current) clearTimeout(timerInatividadeRef.current)
+      return
+    }
+
+    // Porque: em dispositivos partilhados, a sessão JWT pode permanecer ativa
+    // após o técnico abandonar o dispositivo. O timer garante que a sessão é
+    // encerrada após INATIVIDADE_MS sem interação, obrigando o próximo
+    // utilizador a autenticar-se e preservando a rastreabilidade metrológica.
+    const resetar = () => {
+      if (timerInatividadeRef.current) clearTimeout(timerInatividadeRef.current)
+      timerInatividadeRef.current = setTimeout(
+        () => logoutRef.current?.(),
+        INATIVIDADE_MS
+      )
+    }
+
+    const eventos = ['touchstart', 'click', 'keydown', 'scroll']
+    eventos.forEach((ev) => window.addEventListener(ev, resetar, { passive: true }))
+    // Inicia o timer imediatamente ao detectar sessão ativa.
+    resetar()
+
+    return () => {
+      eventos.forEach((ev) => window.removeEventListener(ev, resetar))
+      if (timerInatividadeRef.current) clearTimeout(timerInatividadeRef.current)
+    }
+  }, [session])
 
   useEffect(() => {
     setAuthPromptHandler((mode = 'login') => openAuthPrompt(mode))

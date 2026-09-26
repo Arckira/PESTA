@@ -1,4 +1,5 @@
 import { Route, Routes } from 'react-router-dom'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 import Layout from './components/Layout.jsx'
 import LoginModal from './components/LoginModal.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
@@ -9,13 +10,14 @@ import DetalheEquipamento from './pages/DetalheEquipamento.jsx'
 import Equipamentos from './pages/Equipamentos.jsx'
 import Login from './pages/Login.jsx'
 import Manutencoes from './pages/Manutencoes.jsx'
+import QRCheckin from './pages/QRCheckin.jsx'
 import Reservas from './pages/Reservas.jsx'
 import Utilizadores from './pages/Utilizadores.jsx'
 import Verificacoes from './pages/Verificacoes.jsx'
 
 export default function App() {
   return (
-    <>
+    <ErrorBoundary>
       <LoginModal />
 
       <Routes>
@@ -36,6 +38,9 @@ export default function App() {
             </ProtectedRoute>
           )}
         />
+
+        {/* Página leve para QR codes — sem sidebar nem navbar */}
+        <Route path="/checkin/:id" element={<QRCheckin />} />
 
         {/* Equipamentos: público — técnicos e operadores acedem via QR sem sessão prévia.
             A ação ?action=checkin é gerida internamente por DetalheEquipamento,
@@ -76,6 +81,6 @@ export default function App() {
           )}
         />
       </Routes>
-    </>
+    </ErrorBoundary>
   )
 }

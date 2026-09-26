@@ -16,7 +16,7 @@
 - Documentação: Docstrings estilo Google (Python) e JSDoc (JS).
 - Nunca hardcode passwords ou tokens; usa sempre variáveis de ambiente e alerta se faltarem no .env.
 
-# 3. CONTEXTO INDUSTRIAL E OEE (MÉTRICAS INDUSTRIAL TESTING LAB)
+# 3. CONTEXTO INDUSTRIAL E OEE (MÉTRICAS DO LABORATÓRIO)
 # ---------------------------------------------------------
 - Fórmulas: Usa sempre LaTeX para fórmulas matemáticas e notação científica.
 - OEE: Implementa a lógica de OEE baseada em:
@@ -27,7 +27,7 @@
 
 # 4. RESILIÊNCIA E HARDWARE (IoT)
 # ---------------------------------------------------------
-- Ambiente LAN: O código deve funcionar sem acesso à internet (Ambiente Crítico Industrial Testing Lab).
+- Ambiente LAN: O código deve funcionar sem acesso à internet (ambiente industrial crítico).
 - IoT (ESP32/Pi): Inclui sempre lógica de auto-reconexão Wi-Fi/MQTT e gestão de estado eficiente.
 - Consumo: Considera sempre a eficiência energética e gestão de recursos de memória em sistemas embebidos.
 
