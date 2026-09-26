@@ -1,8 +1,14 @@
-# Industrial Testing Lab — Asset & Operations Management Platform
+# PESTA — Industrial Testing Lab Asset & Operations Management Platform
 
-Sistema integrado de gestão de laboratório industrial, focado na **digitalização e otimização de operações de ensaio**: inventário de equipamentos, reservas, manutenção, avarias, calibrações e indicadores de desempenho (OEE) em tempo real.
+**PESTA** é uma plataforma full-stack (React + FastAPI) de gestão de ativos para laboratórios de ensaios industriais: inventário de equipamentos, reservas, manutenção, avarias, calibrações e OEE em tempo real.
 
-Projeto académico/pessoal, desenvolvido de raiz e avaliado com 19 valores.
+Projeto académico/pessoal, desenvolvido de raiz (schema de dados, API, UI, testes) e avaliado com 19 valores.
+
+## Problem / Solution
+
+**Problema**: um laboratório de ensaios industriais tem dezenas de equipamentos partilhados (câmaras climáticas, câmaras de choque térmico, fornos, salinas), operados por várias equipas. Sem um sistema central, a informação sobre quem está a usar o quê, o estado de cada equipamento, o histórico de avarias/manutenções e o desempenho real (OEE) fica dispersa em folhas de cálculo e conhecimento informal — o que gera conflitos de reserva, equipamento avariado a ser usado por engano, e nenhuma visibilidade sobre disponibilidade real.
+
+**Solução**: o PESTA centraliza todo esse ciclo de vida numa única aplicação web — um equipamento tem sempre um estado único e consistente (Disponível/Ocupado/Avariado/Em Manutenção/Em Calibração), reservas e check-in por QR Code impedem conflitos e usos inválidos ao nível da API, e o dashboard calcula OEE, MTBF e MTTR a partir dos dados reais de utilização.
 
 ## Overview
 
@@ -45,6 +51,15 @@ SQLite (WAL) ── modo de desenvolvimento e implementação atual
 - **Frontend**: React, Vite, React Router, FullCalendar, Recharts, i18n (PT/EN), Lucide icons.
 - **Base de dados**: SQLite em modo WAL (implementação e demonstração atuais). O código de acesso a dados já distingue o dialeto da ligação e aplica migrações condicionais de esquema para SQLite e MSSQL — a base está preparada para migrar para SQL Server, mas essa migração **não foi executada nem validada** neste projeto.
 - **Testes**: pytest (backend), vitest (frontend).
+
+## Technical Decisions
+
+Decisões relevantes, com o porquê (não apenas o quê):
+
+- **SQLite em WAL, com camada de acesso já dialect-aware para MSSQL**: para um projeto de um único laboratório, SQLite elimina a necessidade de um servidor de BD dedicado; WAL mode permite leituras concorrentes durante escritas (relevante com múltiplos operadores/reservas em simultâneo). O código de acesso a dados (`Backend/app/db/database.py`) já deteta o dialeto da ligação e aplica migrações condicionais compatíveis com SQL Server, para que a mudança de infraestrutura, se necessária, não implique reescrever a camada de dados — mas essa migração nunca foi executada nem validada.
+- **Máquina de estados ao nível do equipamento, não apenas validação de formulário**: o estado (Disponível/Ocupado/Avariado/Em Manutenção/Em Calibração) é a fonte de verdade única; transições inválidas (ex. reservar um equipamento avariado, check-in duplo do mesmo utilizador) são rejeitadas na API com códigos HTTP específicos (400/409), não apenas bloqueadas na UI — princípio Poka-Yoke aplicado ao backend.
+- **Autenticação por PIN + hash PBKDF2-SHA256 com salt, tokens de sessão opacos em vez de JWT**: adequado ao contexto (utilizadores internos, terminal físico/QR Code em vez de login remoto complexo); tokens opacos permitem invalidação imediata de sessão do lado do servidor, o que um JWT auto-contido não permite sem infraestrutura adicional (blocklist).
+- **Geração de PDF server-side com Playwright (HTML→PDF)** em vez de uma biblioteca de geração de PDF em Python: permite reutilizar CSS normal para layout dos relatórios, mais simples de manter do que APIs de desenho de PDF de baixo nível.
 
 ## Project Structure
 
@@ -137,10 +152,12 @@ Não são reivindicadas certificações formais (ISO/IATF); as práticas acima s
 
 ## Security
 
-- Autenticação por PIN com hash PBKDF2-SHA256 e salt único por utilizador (nunca armazenado em texto plano) e sessões com expiração.
+- Autenticação por PIN com hash PBKDF2-SHA256 e salt único por utilizador (nunca armazenado em texto plano); tokens de sessão são valores aleatórios opacos (`secrets.token_urlsafe`) com expiração — não há JWT nem chave secreta estática no sistema.
+- Novos utilizadores são criados com um PIN inicial fixo (`0000`, ver `Backend/app/services/auth_service.py`), mas com `forcar_troca_pin=True`: o acesso é bloqueado (`Backend/app/core/deps.py`) até o PIN ser alterado no primeiro login. Padrão conhecido e intencional — não é uma credencial esquecida.
 - `.env`, bases de dados locais, executáveis, backups e logs estão excluídos do controlo de versões (`.gitignore`).
 - Não existem credenciais, chaves de API nem connection strings reais neste repositório — apenas placeholders em `.env.example`.
 - Este repositório foi anonimizado a partir do projeto original: nomes de empresa, logótipos e identificadores específicos foram substituídos por termos genéricos. A funcionalidade e as regras de negócio não foram alteradas.
+- **Known dependency audit findings — review recommended before production deployment.** `npm audit` no frontend reporta vulnerabilidades nas dependências de build (`vite`/`esbuild`/`postcss`/`nanoid`, todas em `devDependencies`, nunca em `dependencies`); não afetam o bundle estático gerado por `npm run build`, mas devem ser revistas antes de qualquer deployment real.
 
 ## License / Usage
 
@@ -148,4 +165,5 @@ Projeto pessoal/académico, publicado como amostra de portfólio. Sem licença o
 
 ## Notas
 
-Dados de demonstração podem ser gerados com `Backend/seed_demo_poster.py` (nunca correr sobre a base de dados de produção — ver instruções no próprio ficheiro).
+- Dados de demonstração podem ser gerados com `Backend/seed_demo_poster.py` (nunca correr sobre a base de dados de produção — ver instruções no próprio ficheiro).
+- O screenshot original do dashboard foi removido durante a anonimização (continha o logótipo da empresa original). Ainda não foi adicionado um novo screenshot/GIF de demonstração a este README — a fazer antes de divulgar o repositório amplamente como peça de portfólio.

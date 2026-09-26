@@ -1,41 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node --input-type=module)",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('models.py'\\).read\\(\\)\\); print\\('models.py OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
-      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000/financeiro/resumo?ano=2025\" -Method GET -ErrorAction SilentlyContinue)",
-      "PowerShell(Stop-Process -Force -ErrorAction SilentlyContinue)",
-      "PowerShell(Invoke-WebRequest -Uri \"http://localhost:8000/financeiro/resumo?ano=2025\" -UseBasicParsing -ErrorAction SilentlyContinue)",
-      "PowerShell(Invoke-WebRequest -Uri \"http://localhost:8000/financeiro/resumo?ano=2025\" -UseBasicParsing 2>&1)",
-      "PowerShell(Invoke-RestMethod \"http://localhost:8000/financeiro/resumo?ano=2025\")",
-      "PowerShell(Invoke-RestMethod \"http://localhost:8000/financeiro/resumo?ano=2025\" -ErrorAction SilentlyContinue)",
-      "Bash(\".venv/Scripts/python.exe\" scripts/reancorar_dataset.py --dry-run --db lab_assets_demo.db)",
-      "Bash(\".venv/Scripts/python.exe\" scripts/reancorar_dataset.py --db lab_assets_demo.db)",
-      "Bash(echo \"EXIT=$?\")",
-      "Bash(\".venv/Scripts/python.exe\" scripts/reancorar_dataset.py --db lab_assets_demo.db --aplicar)",
-      "Bash(\".venv/Scripts/python.exe\" -c ' *)",
-      "Bash(sed -n '/VALIDA/,$p' /tmp/aplicar2.log)",
-      "Bash(\".venv/Scripts/python.exe\" scripts/redimensionar_sessoes.py --db lab_assets_demo.db)",
-      "Bash(sed -n '/VALIDA/,$p' /tmp/resize_dry3.log)",
-      "Bash(grep -n \"^Câmara Clim\\\\|equip=1 \\\\|equip=7 \\\\|equip=18 \" /tmp/resize_dry3.log | head -5 *)",
-      "Bash(cd Backend *)",
-      "Bash(\".venv/Scripts/python.exe\" scripts/redimensionar_sessoes.py --db lab_assets_demo.db --aplicar)",
-      "Bash(sed -n '/VALIDA/,$p' /tmp/resize_aplicar.log)",
-      "Bash(\".venv/Scripts/uvicorn.exe\" app.main:app --reload --host 0.0.0.0 --port 8000)",
-      "Bash(disown)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/docs)",
-      "Bash(xargs grep -H \"^revision\\\\|^down_revision\")",
-      "Bash(\".venv/Scripts/python.exe\" -m alembic stamp head)",
-      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:8000/docs)",
-      "Bash(curl -s http://localhost:8000/openapi.json)",
       "Bash(curl -s http://localhost:8000/health)",
-      "Bash(curl -s http://localhost:8000/api/equipamentos/2/sessao-em-curso)",
-      "Bash(git add *)",
-      "Bash(git push *)"
-    ],
-    "additionalDirectories": [
-      "\\tmp"
+      "Bash(curl -s http://localhost:8000/openapi.json)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:8000/docs)"
     ]
   }
 }
