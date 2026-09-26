@@ -6,6 +6,10 @@ Centraliza o ciclo de vida dos equipamentos — desde inventário, reservas e ut
 
 Projeto académico/pessoal desenvolvido de raiz, incluindo schema de dados, API, interface, testes e regras de negócio. Avaliado com 19 valores.
 
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="Industrial Testing Lab — Dashboard & KPIs de OEE" width="100%" />
+</p>
+
 ## Problem
 
 Laboratórios de ensaios industriais podem ter dezenas de equipamentos partilhados — como câmaras climáticas, câmaras de choque térmico, fornos e salinas — utilizados por várias equipas.
