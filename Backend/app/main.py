@@ -216,20 +216,23 @@ app.include_router(stats.router,         prefix="/api")
 app.include_router(financeiro.router,    prefix="/api")
 
 
-# Diretoria do frontend compilado (Backend/dist)
+# Diretoria do frontend compilado (Backend/dist). Opcional em desenvolvimento:
+# no fluxo de dev documentado (Vite dev server + backend em processos separados),
+# esta pasta não existe — só é produzida ao empacotar a app num único servidor.
 _DIST_DIR = Path(__file__).resolve().parents[1] / "dist"
 
-# Assets compilados (JS/CSS) — caminho físico real
-app.mount("/assets", StaticFiles(directory=_DIST_DIR / "assets"), name="assets")
+if _DIST_DIR.is_dir():
+    # Assets compilados (JS/CSS) — caminho físico real
+    app.mount("/assets", StaticFiles(directory=_DIST_DIR / "assets"), name="assets")
 
-# SPA fallback: qualquer rota não-API e não-asset devolve o index.html.
-# O React Router trata o encaminhamento no cliente. DEVE ser a última rota.
-@app.get("/{caminho_spa:path}")
-async def servir_spa(caminho_spa: str):
-    ficheiro = _DIST_DIR / caminho_spa
-    if ficheiro.is_file():
-        return FileResponse(ficheiro)        # favicon, manifest, etc.
-    return FileResponse(_DIST_DIR / "index.html")
+    # SPA fallback: qualquer rota não-API e não-asset devolve o index.html.
+    # O React Router trata o encaminhamento no cliente. DEVE ser a última rota.
+    @app.get("/{caminho_spa:path}")
+    async def servir_spa(caminho_spa: str):
+        ficheiro = _DIST_DIR / caminho_spa
+        if ficheiro.is_file():
+            return FileResponse(ficheiro)        # favicon, manifest, etc.
+        return FileResponse(_DIST_DIR / "index.html")
 
 
 if __name__ == "__main__":

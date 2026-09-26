@@ -5,11 +5,17 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from pydantic_settings import BaseSettings, SettingsConfigDict
+    from typing import Annotated
+
+    from pydantic import field_validator
+    from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
     class Settings(BaseSettings):
         DATABASE_URL: str = ""
-        CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+        CORS_ORIGINS: Annotated[list[str], NoDecode] = [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
         ACCESS_TOKEN_EXPIRE_MINUTES: int = 600
         SQL_ECHO: bool = False
         DB_POOL_SIZE: int = 20
@@ -19,6 +25,19 @@ try:
             env_file=str(Path(__file__).resolve().parents[2] / ".env"),
             extra="ignore",
         )
+
+        @field_validator("CORS_ORIGINS", mode="before")
+        @classmethod
+        def _split_cors_origins(cls, v: Any) -> Any:
+            """Aceita a lista separada por vírgulas documentada no .env.example.
+
+            Sem este validator, pydantic-settings tenta interpretar o valor como
+            JSON (comportamento por omissão para campos list[str]) e falha o
+            arranque da aplicação com o formato "a,b,c" que o .env.example usa.
+            """
+            if isinstance(v, str):
+                return [o.strip() for o in v.split(",") if o.strip()]
+            return v
 
 except ImportError:
     # Fallback when pydantic-settings is not installed — read .env manually.

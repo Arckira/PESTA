@@ -24,7 +24,7 @@ def _resolver_url() -> str:
     url = settings.DATABASE_URL.strip() if settings.DATABASE_URL else ""
     if url:
         return url
-    db_path = Path(__file__).resolve().parents[4] / "lab_assets.db"
+    db_path = Path(__file__).resolve().parents[3] / "lab_assets.db"
     return f"sqlite:///{db_path}"
 
 
