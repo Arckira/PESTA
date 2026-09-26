@@ -14,7 +14,6 @@ from app.models.base import RoleUtilizador
 from app.models.sessao import SessaoAuth
 from app.models.utilizador import Utilizador
 from app.schemas.auth import (
-    AdminAlterarPinRequest,
     AlterarPinRequest,
     AutoRegistoRequest,
     BootstrapAdminRequest,

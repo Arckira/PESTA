@@ -13,7 +13,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from app.core.config import settings
-from app.core.security import _hash_pin
 from app.models.sessao import SessaoAuth
 from app.models.utilizador import Utilizador
 

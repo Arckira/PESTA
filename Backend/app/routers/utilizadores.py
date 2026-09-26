@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
-from app.core.deps import exigir_admin, exigir_pin_alterado
+from app.core.deps import exigir_admin
 from app.core.security import _hash_pin
 from app.db.database import get_session
 from app.models.utilizador import Utilizador

@@ -13,6 +13,7 @@ env/
 
 # Local database
 *.db
+*.sqlite
 *.sqlite3
 *.db-shm
 *.db-wal
@@ -47,3 +48,6 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# Claude Code local (machine-specific) settings
+.claude/settings.local.json

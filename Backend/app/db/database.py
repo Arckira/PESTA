@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any

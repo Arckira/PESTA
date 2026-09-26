@@ -9,7 +9,6 @@ from sqlmodel import Session, select
 
 from app.db.database import get_session
 from app.models.avaria import Avaria
-from app.models.calibracao import Calibracao
 from app.models.equipamento import Equipamento
 from app.models.manutencao import Manutencao
 from app.services.auth_service import agora_utc

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select
 
-from app.core.deps import exigir_admin, obter_utilizador_opcional
+from app.core.deps import exigir_admin
 from app.db.database import get_session
 from app.models.avaria import Avaria
 from app.models.calibracao import Calibracao

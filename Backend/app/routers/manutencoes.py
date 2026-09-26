@@ -11,12 +11,10 @@ from sqlmodel import Session, select
 
 from app.core.deps import obter_utilizador_opcional
 from app.db.database import get_session, garantir_colunas_manutencoes
-from app.models.avaria import Avaria
 from app.models.base import EstadoEquipamento
 from app.models.equipamento import Equipamento
 from app.models.manutencao import Manutencao
 from app.models.utilizador import Utilizador
-from app.schemas.avaria import ManutencaoCreate
 from app.services.auth_service import agora_utc, obter_ou_404, persistir_sessao
 from app.services.pdf_service import gerar_pdf_playwright, html_relatorio
 

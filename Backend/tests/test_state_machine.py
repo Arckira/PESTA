@@ -58,7 +58,7 @@ def test_checkin_em_equipamento_avariado(client, session):
         estado=EstadoEquipamento.AVARIADO.value,
     )
 
-    resposta = client.post(f"/equipamentos/{eq.id}/checkin", json={})
+    resposta = client.post(f"/api/equipamentos/{eq.id}/checkin", json={})
 
     assert resposta.status_code == 400
     assert "estado" in resposta.json()["detail"].lower()
@@ -89,7 +89,7 @@ def test_checkin_duplo_mesmo_utilizador(client, session, utilizador_teste):
     session.flush()  # after_insert event atualiza o estado do equipamento para Ocupado
 
     # Segundo check-in pelo mesmo utilizador — deve falhar com 409
-    resposta = client.post(f"/equipamentos/{eq.id}/checkin", json={})
+    resposta = client.post(f"/api/equipamentos/{eq.id}/checkin", json={})
 
     assert resposta.status_code == 409
     assert "check-in" in resposta.json()["detail"].lower()
